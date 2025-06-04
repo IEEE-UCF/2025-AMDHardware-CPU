@@ -1,5 +1,5 @@
 module imme #(parameter DATA_WIDTH = 64, INST_WIDTH = 32, IMM_TYPE_WIDTH = 2)(
-    input  wire [INST_WIDTH-1:0]                inst,
+    input  wire [INST_WIDTH-1:0]      inst,
     input  wire [IMM_TYPE_WIDTH-1:0]  imm_type,
     output wire [DATA_WIDTH-1:0]      imm
 );
