@@ -7,7 +7,7 @@ module branch_calc #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32)(
     output wire [ADDR_WIDTH-1:0] jalr_addr
 );
     // Branch Address Calculation
-    wire [ADDR_WIDTH-1:0] bra_offset = {{ADDR_WIDTH-12{inst[31]}}, inst[7], inst[30-25], inst[11:8], 1'b0};
+    wire [ADDR_WIDTH-1:0] bra_offset = {{ADDR_WIDTH-12{inst[31]}}, inst[7], inst[30:25], inst[11:8], 1'b0};
     assign bra_addr = pc + bra_offset;
 
     // Jump and Link Address Calculation
