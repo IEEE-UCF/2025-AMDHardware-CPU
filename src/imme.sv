@@ -1,7 +1,7 @@
 module imme #(parameter DATA_WIDTH = 64, INST_WIDTH = 32, IMM_TYPE_NUM = 4)(
-    input  wire [INST_WIDTH-1:0]      inst,
+    input  wire [INST_WIDTH-1:0]            inst,
     input  wire [$clog2(IMM_TYPE_NUM)-1:0]  imm_type,
-    output wire [DATA_WIDTH-1:0]      imm
+    output wire [DATA_WIDTH-1:0]            imm
 ); // $clog2(N) returns n such that 2^n >= N (Synthesizable if input is constant)
     always @(*) begin
         case(imm_type)
