@@ -35,31 +35,16 @@ module stage_if  #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, PC_TYPE_NUM = 4)(
     reg_if M2 (.clk(clk),
                .reset(reset),
                .stall(stall),
-               .pc_next(pc_next),
-               .pc_reg_out(pc_curr)
+               .pc_next(pc_next)
               );
 
     // M3: Conditional instruction fetch from instruction memory
-    // TODO: Write memory instruction such that it returns garbage or filter value if pc_sel indicates not PC4
+    // TODO: Write memory instruction such that it returns garbage or filter value if pc_sel indicates not Plus4
     memory_instruction M3 (.pc(pc_curr),
                            .pc_sel(pc_sel),
                            .inst_valid(inst_valid),
                            .inst_word(inst_word)
                           );
-    
-    // TODO: Convert into FIFO module to use same structure across buffers
-    reg_if_to_id M4 (.clk(clk),
-                     .reset(reset),
-                     .stall(stall),
-                     .pc4(pc_next_options[0]),
-                     .pc(pc_curr),
-                     .inst(inst_word),
-                     .inst_buffer_empty(inst_buffer_empty),
-                     .inst_buffer_full(inst_buffer_full),
-                     .d_pc(d_pc),
-                     .d_pc4(d_pc4),
-                     .d_inst_word(d_inst)
-                    );
 
 
 endmodule
