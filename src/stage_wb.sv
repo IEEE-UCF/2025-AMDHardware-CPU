@@ -1,4 +1,4 @@
-module pl_stage_wb #(parameter DATA_WIDTH = 32)(
+module pl_stage_wb #(parameter DATA_WIDTH = 64)(
     input  wire [DATA_WIDTH-1:0] walu,
     input  wire [DATA_WIDTH-1:0] wmem,
     input  wire                  wmem2reg,

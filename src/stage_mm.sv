@@ -1,6 +1,6 @@
 module mm_stage #(
-    parameter DATA_WIDTH = 32,
-    parameter ADDR_WIDTH = 32
+    parameter DATA_WIDTH = 64,
+    parameter ADDR_WIDTH = 64
 )(
     input wire clk,
     input wire rst,

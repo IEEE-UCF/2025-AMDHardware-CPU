@@ -1,4 +1,4 @@
-module pl_stage_exe #(parameter DATA_WIDTH = 32)(
+module pl_stage_exe #(parameter DATA_WIDTH = 64)(
     input  wire [DATA_WIDTH-1:0] ea,
     input  wire [DATA_WIDTH-1:0] eb,
     input  wire [DATA_WIDTH-1:0] epc4,
