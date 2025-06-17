@@ -35,3 +35,6 @@ always_ff @(posedge clk or posedge rst) begin
         write_data_out  <= write_data_in;
         rd_out          <= rd_in;
     end
+end
+
+endmodule

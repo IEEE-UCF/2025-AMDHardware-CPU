@@ -49,17 +49,17 @@ module cpu_top #(
     wire [ADDR_WIDTH-1:0] id_jar_addr;
     
     // Control signals from ID stage (would come from control unit)
-    wire                  id_reg_write;
-    wire                  id_mem_read;
-    wire                  id_mem_write;
-    wire [4:0]            id_alu_op;
-    wire                  id_has_imm;
-    wire [1:0]            id_imm_type;
-    wire [$clog2(PC_TYPE_NUM)-1:0] id_pc_sel;
-    wire                  id_is_load;
-    wire [$clog2(REG_NUM)-1:0] id_rd;
-    wire [$clog2(REG_NUM)-1:0] id_rs1;
-    wire [$clog2(REG_NUM)-1:0] id_rs2;
+    reg                   id_reg_write;
+    reg                   id_mem_read;
+    reg                   id_mem_write;
+    reg [4:0]             id_alu_op;
+    reg                   id_has_imm;
+    reg [1:0]             id_imm_type;
+    reg [$clog2(PC_TYPE_NUM)-1:0] id_pc_sel;
+    reg                   id_is_load;
+    reg [$clog2(REG_NUM)-1:0] id_rd;
+    reg [$clog2(REG_NUM)-1:0] id_rs1;
+    reg [$clog2(REG_NUM)-1:0] id_rs2;
     
     // ID/EX pipeline register outputs
     wire                  idex_reg_write;

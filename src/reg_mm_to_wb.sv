@@ -28,3 +28,5 @@ always_ff @(posedge clk or posedge rst) begin
         reg_write_out  <= reg_write_in;
     end
 end
+
+endmodule

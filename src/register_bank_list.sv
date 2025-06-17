@@ -53,12 +53,12 @@ module register_bank_list #(parameter REG_NUM = 32, DATA_WIDTH = 64)(
                           );
     
     // Choose to output main or shadow register data depending on context (interrupt)
-    mux_n a_out #(.INPUT_NUM(2)) (.data_in(data_out_a_options),
+    mux_n #(.INPUT_NUM(2)) a_out (.data_in(data_out_a_options),
                                   .sel(interrupt),
                                   .data_out(data_out_a)
                                  );
 
-    mux_n b_out #(.INPUT_NUM(2)) (.data_in(data_out_b_options),
+    mux_n #(.INPUT_NUM(2)) b_out (.data_in(data_out_b_options),
                                   .sel(interrupt),
                                   .data_out(data_out_b)
                                  );

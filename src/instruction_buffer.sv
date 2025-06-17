@@ -19,7 +19,7 @@ module instruction_buffer #(parameter INST_WIDTH = 32, BUFFER_DEPTH = 8)(
     wire lower_bits_equal;
     wire upper_bit_equal;
 
-    assign lower_bits_equal = (write_ptr[$clog2(BUFFER_DEPTH)-1:0] == read_ptr[$clog2(BUFFER_DEPTH)-1:0]) // Checks for same buffer position
+    assign lower_bits_equal = (write_ptr[$clog2(BUFFER_DEPTH)-1:0] == read_ptr[$clog2(BUFFER_DEPTH)-1:0]); // Checks for same buffer position
     assign upper_bit_equal  = (write_ptr[BUFFER_DEPTH] == read_ptr[BUFFER_DEPTH]); // Checks if pointers have looped over or not
     assign is_empty_flag    = (upper_bit_equal & lower_bits_equal); // If same pos but not looped over, must be empty
     assign is_full_flag     = (~upper_bit_equal & lower_bits_equal); // If same pos but looped over, must be full (Circular buffer)
