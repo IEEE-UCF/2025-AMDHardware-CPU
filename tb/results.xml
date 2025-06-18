@@ -1,8 +1,0 @@
-<testsuites name="results">
-  <testsuite name="all" package="all">
-    <property name="random_seed" value="1750184633" />
-    <testcase name="test_load_store" classname="cpu_top_tb" file="/home/jackn/Documents/GithubRepos/2025-AMDHardware-CPU/tb/cpu_top_tb.py" lineno="222" time="0.0031256675720214844" sim_time_ns="310.001" ratio_time="99179.13305141113">
-      <failure message="Test failed with RANDOM_SEED=1750184633" />
-    </testcase>
-  </testsuite>
-</testsuites>
