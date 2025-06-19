@@ -8,6 +8,7 @@ TOPLEVEL_LANG ?= verilog
 
 # Source files
 VERILOG_SOURCES += $(PWD)/../src/cpu_top.sv
+VERILOG_SOURCES += $(PWD)/../src/control_unit.sv
 VERILOG_SOURCES += $(PWD)/../src/stage_if.sv
 VERILOG_SOURCES += $(PWD)/../src/stage_id.sv
 VERILOG_SOURCES += $(PWD)/../src/stage_ex.sv
@@ -83,6 +84,9 @@ test-stall:
 test-interrupt:
 	$(MAKE) MODULE=cpu_top_tb TESTCASE=test_interrupt_handling
 
+test-control:
+	$(MAKE) MODULE=cpu_top_tb TESTCASE=test_control_unit
+
 # Install dependencies
 install-deps:
 	pip install cocotb pytest
@@ -98,6 +102,7 @@ help:
 	@echo "  test-jump     - Run jump test only"
 	@echo "  test-stall    - Run stall test only"
 	@echo "  test-interrupt - Run interrupt test only"
+	@echo "  test-control  - Run control unit test only"
 	@echo "  clean-extra   - Clean build files"
 	@echo "  install-deps  - Install Python dependencies"
 	@echo ""
@@ -105,4 +110,4 @@ help:
 	@echo "  SIM=<simulator>  - Select simulator (default: verilator)"
 	@echo "  WAVES=1         - Enable waveform dumping"
 
-.PHONY: clean-extra help install-deps test-reset test-arithmetic test-memory test-branch test-jump test-stall test-interrupt
+.PHONY: clean-extra help install-deps test-reset test-arithmetic test-memory test-branch test-jump test-stall test-interrupt test-control

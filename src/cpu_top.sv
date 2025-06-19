@@ -39,6 +39,31 @@ module cpu_top #(
     wire                  if_inst_buffer_empty;
     wire                  if_inst_buffer_full;
     
+    // Control unit interface signals (now properly declared)
+    wire [INST_WIDTH-1:0] if_to_id_inst;
+    wire                  if_to_id_valid;
+    wire                  is_equal;
+    
+    // Control unit outputs
+    wire                  reg_write;
+    wire                  mem_read;
+    wire                  mem_write;
+    wire [4:0]            alu_op;
+    wire                  has_imm;
+    wire [1:0]            imm_type;
+    wire [1:0]            pc_sel;
+    wire                  is_load;
+    wire                  is_store;
+    wire                  is_branch;
+    wire                  is_jump;
+    wire                  is_system;
+    wire [4:0]            rd;
+    wire [4:0]            rs1;
+    wire [4:0]            rs2;
+    wire [2:0]            funct3;
+    wire [6:0]            funct7;
+    wire [6:0]            opcode;
+    
     // ID stage outputs
     wire                  id_is_equal;
     wire [ADDR_WIDTH-1:0] id_read_out_gpu;
@@ -134,6 +159,11 @@ module cpu_top #(
     assign debug_inst = if_inst;
     assign pipeline_stall = global_stall;
     
+    // Connect control unit interface
+    assign if_to_id_inst = if_inst;
+    assign if_to_id_valid = if_inst_valid;
+    assign is_equal = id_is_equal;
+    
     // Global stall control
     assign global_stall = load_stall | if_inst_buffer_full | ~dmem_ready;
     
@@ -203,6 +233,43 @@ module cpu_top #(
         id_rs2 = if_inst[24:20];
     end
     
+    // Instantiate the control unit (properly connected)
+    control_unit #(
+        .INST_WIDTH(INST_WIDTH),
+        .PC_TYPE_NUM(PC_TYPE_NUM),
+        .IMM_TYPE_NUM(IMM_TYPE_NUM),
+        .REG_NUM(REG_NUM)
+    ) control_unit_inst (
+        .instruction(if_to_id_inst),
+        .inst_valid(if_to_id_valid),
+        .stall(pipeline_stall),
+        .is_equal(is_equal),
+        
+        // Control outputs
+        .reg_write(reg_write),
+        .mem_read(mem_read),
+        .mem_write(mem_write),
+        .alu_op(alu_op),
+        .has_imm(has_imm),
+        .imm_type(imm_type),
+        .pc_sel(pc_sel),
+        .is_load(is_load),
+        .is_store(is_store),
+        .is_branch(is_branch),
+        .is_jump(is_jump),
+        .is_system(is_system),
+        
+        // Register addresses
+        .rd(rd),
+        .rs1(rs1),
+        .rs2(rs2),
+        
+        // Function codes
+        .funct3(funct3),
+        .funct7(funct7),
+        .opcode(opcode)
+    );
+
     // Pipeline Stage Instantiations
     
     // Instruction Fetch (IF) Stage

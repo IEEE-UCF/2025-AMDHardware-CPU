@@ -47,35 +47,3 @@ module memory_data #(
     
     assign ready = 1'b1; // Always ready
 endmodule
-
-module control_unit #(
-    parameter INST_WIDTH = 32
-)(
-    input  wire [INST_WIDTH-1:0] instruction,
-    output wire                  reg_write,
-    output wire                  mem_read,
-    output wire                  mem_write,
-    output wire                  branch,
-    output wire                  jump,
-    output wire [3:0]            alu_op,
-    output wire [1:0]            alu_src,
-    output wire [1:0]            pc_src,
-    output wire                  mem_to_reg,
-    output wire [2:0]            imm_type
-);
-    // Basic control unit stub
-    wire [6:0] opcode = instruction[6:0];
-    
-    assign reg_write = (opcode == 7'b0110011) | (opcode == 7'b0010011) | 
-                      (opcode == 7'b0000011) | (opcode == 7'b1101111) | 
-                      (opcode == 7'b1100111);
-    assign mem_read = (opcode == 7'b0000011);
-    assign mem_write = (opcode == 7'b0100011);
-    assign branch = (opcode == 7'b1100011);
-    assign jump = (opcode == 7'b1101111) | (opcode == 7'b1100111);
-    assign alu_op = instruction[14:12];
-    assign alu_src = (opcode == 7'b0010011) ? 2'b01 : 2'b00;
-    assign pc_src = jump ? 2'b10 : (branch ? 2'b01 : 2'b00);
-    assign mem_to_reg = mem_read;
-    assign imm_type = instruction[14:12];
-endmodule
