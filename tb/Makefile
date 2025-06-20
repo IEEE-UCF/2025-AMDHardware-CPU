@@ -30,6 +30,8 @@ VERILOG_SOURCES += $(PWD)/../src/imme.sv
 VERILOG_SOURCES += $(PWD)/../src/equ.sv
 VERILOG_SOURCES += $(PWD)/../src/update_pc.sv
 VERILOG_SOURCES += $(PWD)/../src/stage_id_stall.sv
+VERILOG_SOURCES += $(PWD)/../src/dispatcher.sv
+VERILOG_SOURCES += $(PWD)/../src/coprocessor_system.sv
 VERILOG_SOURCES += $(PWD)/../rtl_utils/mux_n.sv
 VERILOG_SOURCES += $(PWD)/../rtl_utils/fifo.sv
 VERILOG_SOURCES += $(PWD)/../rtl_utils/adder_n.sv
@@ -46,9 +48,16 @@ MODULE = cpu_top_tb
 
 # Verilator specific flags
 ifeq ($(SIM), verilator)
-    EXTRA_ARGS += --trace --trace-structs
-    COMPILE_ARGS += -Wno-WIDTHCONCAT -Wno-WIDTHEXPAND -Wno-CASEINCOMPLETE
-    COMPILE_ARGS += -Wno-CASEX -Wno-TIMESCALEMOD -Wno-UNOPTFLAT -Wno-SYMRSVDWORD
+    EXTRA_ARGS += --timescale 1ns/1ps
+    EXTRA_ARGS += --trace
+    EXTRA_ARGS += --trace-structs
+    EXTRA_ARGS += -Wno-WIDTHCONCAT
+    EXTRA_ARGS += -Wno-WIDTHEXPAND  
+    EXTRA_ARGS += -Wno-CASEINCOMPLETE
+    EXTRA_ARGS += -Wno-CASEX
+    EXTRA_ARGS += -Wno-TIMESCALEMOD
+    EXTRA_ARGS += -Wno-UNOPTFLAT
+    EXTRA_ARGS += -Wno-SYMRSVDWORD
 endif
 
 # Include cocotb make rules
