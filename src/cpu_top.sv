@@ -93,7 +93,7 @@ module cpu_top #(
         .DATA_WIDTH(DATA_WIDTH),
         .INST_WIDTH(INST_WIDTH),
         .CP_NUM(3)
-    ) coprocessor_dispatcher_inst (
+    ) dispatcher_inst (
         .clk(clk),
         .rst_n(rst_n),
         .instruction(inst_id_ex),

@@ -41,16 +41,43 @@ module dispatcher #(
     wire [4:0] rs1 = instruction[19:15];
     wire [4:0] rs2 = instruction[24:20];
     
-    // Coprocessor instruction detection (custom opcode)
-    wire is_coprocessor_inst = (opcode == 7'b1010111) && inst_valid && !pipeline_stall;
+    // Coprocessor instruction detection based on opcodes
+    reg coprocessor_detected;
+    reg [1:0] coprocessor_select;
+    
+    always @(*) begin
+        coprocessor_detected = 1'b0;
+        coprocessor_select = 2'b00;
+        
+        if (inst_valid && !pipeline_stall) begin
+            case (opcode)
+                7'b1110011: begin // System instructions (CSR, etc.) -> CP0
+                    coprocessor_detected = 1'b1;
+                    coprocessor_select = 2'b00;
+                end
+                7'b1010011: begin // Floating point instructions -> CP1
+                    coprocessor_detected = 1'b1;
+                    coprocessor_select = 2'b01;
+                end
+                7'b0001011: begin // Custom instructions -> CP2
+                    coprocessor_detected = 1'b1;
+                    coprocessor_select = 2'b10;
+                end
+                default: begin
+                    coprocessor_detected = 1'b0;
+                    coprocessor_select = 2'b00;
+                end
+            endcase
+        end
+    end
     
     // Coprocessor dispatch logic
-    assign cp_valid = is_coprocessor_inst;
+    assign cp_valid = coprocessor_detected;
     assign cp_instruction = instruction;
     assign cp_data_in = rs1_data; // Use rs1 data as input to coprocessor
-    assign cp_select = funct3[1:0]; // Use lower 2 bits of funct3 for coprocessor selection
-    assign cp_instruction_detected = is_coprocessor_inst;
-    assign cp_stall_request = is_coprocessor_inst && !cp_ready;
+    assign cp_select = coprocessor_select;
+    assign cp_instruction_detected = coprocessor_detected;
+    assign cp_stall_request = coprocessor_detected && !cp_ready;
     assign cp_exception_out = cp_exception;
     
     // Result handling

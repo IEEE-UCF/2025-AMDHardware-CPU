@@ -247,7 +247,6 @@ async def test_coprocessor_dispatcher(dut):
     
     # Initialize memory interface
     dut.interrupt.value = 0
-    dut.imem_read_data.value = 0x1110011  # System instruction for CP0
     dut.imem_ready.value = 1
     dut.dmem_read_data.value = 0
     dut.dmem_ready.value = 1
@@ -256,14 +255,15 @@ async def test_coprocessor_dispatcher(dut):
     await tb.reset_cpu()
     
     # Test different coprocessor instructions
-    instructions = [
-        0x1110011,  # CP0 - System
-        0x1010011,  # CP1 - FPU
-        0x100000B,  # CP2 - Custom
+    test_cases = [
+        (0b001100000000_00000_010_00001_1110011, "CP0 - System"),      # CSRR
+        (0b0000000_00010_00001_000_00011_1010011, "CP1 - FPU"),        # FADD.D
+        (0b0000000_00010_00001_000_00011_0001011, "CP2 - Custom"),     # Custom
     ]
     
-    for inst in instructions:
-        dut.imem_read_data.value = inst
+    for instruction, description in test_cases:
+        dut._log.info(f"Testing {description}")
+        dut.imem_read_data.value = instruction
         await tb.run_cycles(20)
     
     dut._log.info("Coprocessor dispatcher test completed successfully")
