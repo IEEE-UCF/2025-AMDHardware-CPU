@@ -10,7 +10,7 @@ module reg_if_to_id #(ADDR_WIDTH = 64, INST_WIDTH = 32) (
     output wire [ADDR_WIDTH-1:0] d_pc4,
     output wire [ADDR_WIDTH-1:0] d_pc,
     output wire [INST_WIDTH-1:0] d_inst,
-    output wire [INST_WIDTH-1:0] d_inst_next
+    //output wire [INST_WIDTH-1:0] d_inst_next
 );
 
     reg [ADDR_WIDTH-1:0] pc4_reg;
@@ -39,7 +39,7 @@ module reg_if_to_id #(ADDR_WIDTH = 64, INST_WIDTH = 32) (
                               .write_en(~stall),
                               .data_in(inst),
                               .data_out(d_inst),
-                              .data_next(d_inst_next),
+                              //.data_next(d_inst_next),
                               .is_empty(inst_buffer_empty),
                               .is_full(inst_buffer_full)
                              );
