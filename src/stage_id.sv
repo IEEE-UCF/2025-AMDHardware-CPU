@@ -1,4 +1,4 @@
-module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32 REG_NUM = 32) (
+module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, REG_NUM = 32) (
     input  wire                           clk,
     input  wire                           reset,
     input  wire                           interrupt,
@@ -6,6 +6,7 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32 REG_NUM = 32) (
     input  wire                           w_en,
     input  wire                           w_en_gpu,
     input  wire                           has_imm,
+    input  wire [1:0]                     imm_type,
     input  wire [ADDR_WIDTH-1:0]          pc4,
     input  wire [ADDR_WIDTH-1:0]          pc,
     input  wire [ADDR_WIDTH-1:0]          w_result,
@@ -15,7 +16,7 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32 REG_NUM = 32) (
     input  wire [ADDR_WIDTH-1:0]          mm_mem,
     input  wire [INST_WIDTH-1:0]          inst_word,
     input  wire [$clog2(REG_NUM)-1:0]     load_rd,
-    input  wire [$clog2(REG_NUM)-1:0]     is_load,
+    input  wire                           is_load,
     input  wire [$clog2(REG_NUM)-1:0]     w_rd,
     input  wire [$clog2(REG_NUM)-1:0]     w_rd_gpu,
     input  wire [$clog2(REG_NUM)-1:0]     rs_gpu,
@@ -34,6 +35,7 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32 REG_NUM = 32) (
     wire                  inst_buffer_empty;
     wire                  inst_buffer_full;
     wire                  load_stall;
+    wire                  reg_stall;
     wire [ADDR_WIDTH-1:0] d_pc;
     wire [ADDR_WIDTH-1:0] d_pc4;
     wire [ADDR_WIDTH-1:0] a_out;
@@ -41,7 +43,7 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32 REG_NUM = 32) (
     wire [ADDR_WIDTH-1:0] a_file_out;
     wire [ADDR_WIDTH-1:0] b_file_out;
     wire [INST_WIDTH-1:0] d_inst;
-    wire [INST_WIDTH-1:0] d_inst_next;
+    // wire [INST_WIDTH-1:0] d_inst_next;
 
     // M1: Push PC selector back to stage_if
 
@@ -55,7 +57,7 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32 REG_NUM = 32) (
                               .data_a(a_out),
                               .bra_addr(bra_addr),
                               .jal_addr(jal_addr),
-                              .jar_addr(jar_addr)
+                              .jalr_addr(jar_addr)
                              );
 
     // M2: Have register IF to ID for pipeline stage
@@ -67,8 +69,8 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32 REG_NUM = 32) (
     // will send stall for one cycle
     stage_id_stall load_stall_check (.load_rd(load_rd),
                                      .is_load(is_load),
-                                     .rs1(d_inst_next[19:15]),
-                                     .rs2(d_inst_next[24:20]),
+                                     .rs1_addr(d_inst[19:15]),
+                                     .rs2_addr(d_inst[24:20]),
                                      .stall(load_stall)
                                     );
 
@@ -85,8 +87,8 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32 REG_NUM = 32) (
                      .inst_buffer_full(inst_buffer_full),
                      .d_pc(d_pc),
                      .d_pc4(d_pc4),
-                     .d_inst_word(d_inst)
-                     .d_inst_next(d_inst_next);
+                     .d_inst(d_inst)
+                     // .d_inst_next(d_inst_next)
                     );
 
 
@@ -94,7 +96,7 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32 REG_NUM = 32) (
 
     register_bank_list register_file (.clk(clk),
                                       .reset(reset),
-                                      .interrupt(interrupt)
+                                      .interrupt(interrupt),
                                       .write_addr_cpu(w_rd),
                                       .write_addr_gpu(w_rd_gpu),
                                       .data_in_cpu(w_result),
@@ -136,11 +138,10 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32 REG_NUM = 32) (
                    .imm(b_out_options[1])
                   );
     
-    mux_n b_mux (.data_in(b_out_options),
-                 .sel(has_imm),
-                 .data_out(read_out_b)
-                );
+    mux_n #(.INPUT_NUM(2)) b_mux (.data_in(b_out_options),
+                                  .sel(has_imm),
+                                  .data_out(read_out_b)
+                                 );
 
     assign read_out_a = a_out;
-    
 endmodule

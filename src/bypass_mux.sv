@@ -1,4 +1,4 @@
-module bypass_mux  #(parameter ADDR_WIDTH = 64, REG_NUM = 32)(
+module bypass_mux #(parameter ADDR_WIDTH = 64, REG_NUM = 32)(
     input  wire [ADDR_WIDTH-1:0] file_out,
     input  wire [ADDR_WIDTH-1:0] ex_pro,
     input  wire [ADDR_WIDTH-1:0] mm_pro,
@@ -10,10 +10,10 @@ module bypass_mux  #(parameter ADDR_WIDTH = 64, REG_NUM = 32)(
     output wire [ADDR_WIDTH-1:0] bypass_out
 );
 
-    wire [1:0] bypass_sel;
+    reg [1:0] bypass_sel;
     wire [ADDR_WIDTH-1:0] bypass_options [0:3];
     
-    always_comb {
+    always_comb begin
         if (file_out_rs == ex_pro_rs) begin
             bypass_sel = 2'b01;
         end
@@ -26,7 +26,7 @@ module bypass_mux  #(parameter ADDR_WIDTH = 64, REG_NUM = 32)(
         else begin
             bypass_sel = 2'b00;
         end
-    }
+    end
 
     assign bypass_options = {file_out, ex_pro, mm_pro, mm_mem};
 
@@ -35,11 +35,4 @@ module bypass_mux  #(parameter ADDR_WIDTH = 64, REG_NUM = 32)(
         .sel(bypass_sel),
         .data_out(bypass_out)
     );
-
-
-
-
-    
-
-
 endmodule

@@ -9,7 +9,7 @@ module instruction_buffer #(parameter INST_WIDTH = 32, BUFFER_DEPTH = 8)(
 );
     reg [INST_WIDTH-1:0]         inst_buffer [0:BUFFER_DEPTH-1];
     reg [INST_WIDTH-1:0]         inst_curr;
-    reg [INST_WIDTH-1:0]         inst_next;
+    //reg [INST_WIDTH-1:0]         inst_next;
     reg [$clog2(BUFFER_DEPTH):0] write_ptr;
     reg [$clog2(BUFFER_DEPTH):0] read_ptr;
     
@@ -19,7 +19,7 @@ module instruction_buffer #(parameter INST_WIDTH = 32, BUFFER_DEPTH = 8)(
     wire lower_bits_equal;
     wire upper_bit_equal;
 
-    assign lower_bits_equal = (write_ptr[$clog2(BUFFER_DEPTH)-1:0] == read_ptr[$clog2(BUFFER_DEPTH)-1:0]) // Checks for same buffer position
+    assign lower_bits_equal = (write_ptr[$clog2(BUFFER_DEPTH)-1:0] == read_ptr[$clog2(BUFFER_DEPTH)-1:0]); // Checks for same buffer position
     assign upper_bit_equal  = (write_ptr[BUFFER_DEPTH] == read_ptr[BUFFER_DEPTH]); // Checks if pointers have looped over or not
     assign is_empty_flag    = (upper_bit_equal & lower_bits_equal); // If same pos but not looped over, must be empty
     assign is_full_flag     = (~upper_bit_equal & lower_bits_equal); // If same pos but looped over, must be full (Circular buffer)
@@ -45,5 +45,4 @@ module instruction_buffer #(parameter INST_WIDTH = 32, BUFFER_DEPTH = 8)(
     assign data_out = inst_curr;
     assign is_empty = is_empty_flag;
     assign is_full = is_full_flag;
-
 endmodule

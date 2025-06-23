@@ -1,4 +1,4 @@
-module stage_id_stall #(ADDR_WIDTH = 64, REG_NUM = 32) (
+module stage_id_stall #(parameter ADDR_WIDTH = 64, REG_NUM = 32) (
     input  wire [$clog2(REG_NUM)-1:0] load_rd,
     input  wire                       is_load,
     input  wire [$clog2(REG_NUM)-1:0] rs1_addr,
