@@ -1,4 +1,4 @@
-module bypass_mux  #(parameter ADDR_WIDTH = 64, REG_NUM = 32)(
+module bypass_mux #(parameter ADDR_WIDTH = 64, REG_NUM = 32)(
     input  wire [ADDR_WIDTH-1:0] file_out,
     input  wire [ADDR_WIDTH-1:0] ex_pro,
     input  wire [ADDR_WIDTH-1:0] mm_pro,
@@ -35,11 +35,4 @@ module bypass_mux  #(parameter ADDR_WIDTH = 64, REG_NUM = 32)(
         .sel(bypass_sel),
         .data_out(bypass_out)
     );
-
-
-
-
-    
-
-
 endmodule

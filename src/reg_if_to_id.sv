@@ -44,6 +44,5 @@ module reg_if_to_id #(ADDR_WIDTH = 64, INST_WIDTH = 32) (
                              );
 
     // For now, just assign d_inst_next to d_inst (would need more complex lookahead logic)
-    assign d_inst_next = d_inst;
-
+    // assign d_inst_next = d_inst;
 endmodule

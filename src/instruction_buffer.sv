@@ -9,7 +9,7 @@ module instruction_buffer #(parameter INST_WIDTH = 32, BUFFER_DEPTH = 8)(
 );
     reg [INST_WIDTH-1:0]         inst_buffer [0:BUFFER_DEPTH-1];
     reg [INST_WIDTH-1:0]         inst_curr;
-    reg [INST_WIDTH-1:0]         inst_next;
+    //reg [INST_WIDTH-1:0]         inst_next;
     reg [$clog2(BUFFER_DEPTH):0] write_ptr;
     reg [$clog2(BUFFER_DEPTH):0] read_ptr;
     
@@ -45,5 +45,4 @@ module instruction_buffer #(parameter INST_WIDTH = 32, BUFFER_DEPTH = 8)(
     assign data_out = inst_curr;
     assign is_empty = is_empty_flag;
     assign is_full = is_full_flag;
-
 endmodule
