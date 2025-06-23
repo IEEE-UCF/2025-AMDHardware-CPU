@@ -1,23 +1,3 @@
-`timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date: 06/22/2025 05:32:43 PM
-// Design Name: 
-// Module Name: imem
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-// 
-//////////////////////////////////////////////////////////////////////////////////
 module xdecode #(parameter SIZE = 4)(
     input  wire [SIZE-1:0] addr,
     output reg  [(1<<SIZE)-1:0] loc
