@@ -35,7 +35,8 @@ module stage_if  #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, PC_TYPE_NUM = 4)(
     reg_if M2 (.clk(clk),
                .reset(reset),
                .stall(stall),
-               .pc_next(pc_next)
+               .pc_next(pc_next),
+               .pc_reg(pc_curr)
               );
 
     // M3: Conditional instruction fetch from instruction memory
