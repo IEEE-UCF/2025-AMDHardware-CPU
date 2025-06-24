@@ -6,9 +6,9 @@ module stage_if  #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, PC_TYPE_NUM = 4)(
     input  wire [ADDR_WIDTH-1:0]          bra_addr,
     input  wire [ADDR_WIDTH-1:0]          jal_addr,
     input  wire [ADDR_WIDTH-1:0]          jar_addr,
-    output wire [ADDR_WIDTH-1:0]          pc_out,
-    output wire [ADDR_WIDTH-1:0]          pc4_out,
-    output wire [INST_WIDTH-1:0]          inst_word_out,
+    output wire [ADDR_WIDTH-1:0]          pc,
+    output wire [ADDR_WIDTH-1:0]          pc4,
+    output wire [INST_WIDTH-1:0]          inst_word,
     output wire                           inst_valid,
     output wire                           inst_buffer_empty,
     output wire                           inst_buffer_full
@@ -17,12 +17,11 @@ module stage_if  #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, PC_TYPE_NUM = 4)(
     wire [ADDR_WIDTH-1:0] pc_next;
     wire [ADDR_WIDTH-1:0] pc_curr;
     wire [ADDR_WIDTH-1:0] pc_next_options [0:PC_TYPE_NUM-1];
-    wire [INST_WIDTH-1:0] inst_word;
 
     assign pc_next_options[0] = pc_curr + 4;
     assign pc_next_options[1] = bra_addr;
-    assign pc_next_options[2] = jar_addr;
-    assign pc_next_options[3] = jal_addr;
+    assign pc_next_options[2] = jal_addr;
+    assign pc_next_options[3] = jar_addr;
 
     // M1: Compute next PC based on pc_sel and curr_pc
     mux_n M1 (.data_in(pc_next_options), 
@@ -35,7 +34,8 @@ module stage_if  #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, PC_TYPE_NUM = 4)(
     reg_if M2 (.clk(clk),
                .reset(reset),
                .stall(stall),
-               .pc_next(pc_next)
+               .pc_next(pc_next),
+               .pc_reg(pc_curr)
               );
 
     // M3: Conditional instruction fetch from instruction memory
@@ -45,9 +45,7 @@ module stage_if  #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, PC_TYPE_NUM = 4)(
                            .inst_valid(inst_valid),
                            .inst_word(inst_word)
                           );
-    
-    assign pc_out = pc_curr;
-    assign pc4_out = pc4;
-    assign inst_word_out = inst_word;
-
+  
+    assign pc = pc_curr;
+    assign pc4 = pc_next_options[0];
 endmodule

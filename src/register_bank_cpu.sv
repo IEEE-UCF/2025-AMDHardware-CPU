@@ -16,13 +16,14 @@ module register_bank_cpu #(parameter REG_NUM = 32, DATA_WIDTH = 64)(
     assign data_out_b = registers[read_addr_b];
 
     // Writing data in clock sequence
-    always_ff @(negedge clk) {
+    always_ff @(negedge clk) begin
         if (reset) begin
-            registers <= '0;
+            for (int i = 0; i < REG_NUM; i++) begin
+                registers[i] <= {DATA_WIDTH{1'b0}};
+            end
         end
         else if (write_en && (write_addr != 0)) begin
             registers[write_addr] <= data_in;
         end
-    }
-
+    end
 endmodule

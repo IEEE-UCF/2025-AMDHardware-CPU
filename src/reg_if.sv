@@ -3,11 +3,11 @@ module reg_if #(parameter ADDR_WIDTH = 64)(
     input  wire                  reset,
     input  wire                  stall,
     input  wire [ADDR_WIDTH-1:0] pc_next,
-    output reg  [ADDR_WIDTH-1:0] pc_reg,
+    output reg  [ADDR_WIDTH-1:0] pc_reg
 );
     localparam RESET_ADDR = {ADDR_WIDTH{1'b0}};
 
-    always_ff @(posedge clk or posedge reset) begin
+    always_ff @(posedge clk) begin
         if (reset) begin
             pc_reg <= RESET_ADDR;
         end
