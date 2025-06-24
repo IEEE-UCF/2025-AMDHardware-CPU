@@ -31,8 +31,14 @@ module control_unit #(
     // Function codes for further decoding
     output wire [2:0]                     funct3,
     output wire [6:0]                     funct7,
-    output wire [6:0]                     opcode
+    output wire [6:0]                     opcode,
+
+    // Flags for detecting rs1, rs2, and rs3 in stage_id_stall's load-stall check
+    output wire                           has_rs1_out,
+    output wire                           has_rs2_out,
+    output wire                           has_rs3_out  
 );
+    reg is_mscmem;
 
     // Extract instruction fields
     assign opcode = instruction[6:0];
@@ -52,8 +58,10 @@ module control_unit #(
     localparam OP_STORE   = 7'b0100011;  // Store instructions
     localparam OP_OP_IMM  = 7'b0010011;  // Immediate ALU operations
     localparam OP_OP      = 7'b0110011;  // Register ALU operations
-    localparam OP_MISC_MEM = 7'b0001111; // FENCE instructions
+    localparam OP_MISCMEM = 7'b0001111;  // FENCE instructions
     localparam OP_SYSTEM  = 7'b1110011;  // System instructions (ECALL, EBREAK, CSR)
+    localparam OP_FL      = 7'b0000111;  // Floating-Point Load
+    localparam OP_FOTHER  = 7'b1010011;
 
     // ALU Operations (matching your stage_ex.sv)
     localparam ALU_ADD    = 5'b00000;
@@ -80,11 +88,11 @@ module control_unit #(
     localparam PC_JAL     = 2'b10;
     localparam PC_JALR    = 2'b11;
 
-    // Immediate Types (matching your imme.sv)
+    // Immediate Types (matching imme.sv)
     localparam IMM_I_TYPE = 2'b00;  // I-type immediate
     localparam IMM_SHIFT  = 2'b01;  // Shift immediate
     localparam IMM_S_TYPE = 2'b10;  // S-type immediate
-    localparam IMM_U_TYPE = 2'b11;  // U-type immediate
+    localparam IMM_U_OR_J_TYPE = 2'b11;  // U-type immediate
 
     // Main control logic
     always_comb begin
@@ -101,6 +109,7 @@ module control_unit #(
         is_branch = 1'b0;
         is_jump   = 1'b0;
         is_system = 1'b0;
+        is_mscmem = 1'b0;
 
         // Only decode if instruction is valid and not stalled
         if (inst_valid && !stall) begin
@@ -108,20 +117,21 @@ module control_unit #(
                 OP_LUI: begin
                     reg_write = 1'b1;
                     has_imm   = 1'b1;
-                    imm_type  = IMM_U_TYPE;
+                    imm_type  = IMM_U_OR_J_TYPE;
                     alu_op    = ALU_PASS_B;  // Pass immediate to output
                 end
 
                 OP_AUIPC: begin
                     reg_write = 1'b1;
                     has_imm   = 1'b1;
-                    imm_type  = IMM_U_TYPE;
+                    imm_type  = IMM_U_OR_J_TYPE;
                     alu_op    = ALU_ADD;     // PC + immediate
                 end
 
                 OP_JAL: begin
                     reg_write = 1'b1;
                     is_jump   = 1'b1;
+                    imm_type  = IMM_U_OR_J_TYPE; // Determines when instruction has rs1 in stage_id_stall
                     pc_sel    = PC_JAL;
                     alu_op    = ALU_PASS_A;  // Pass PC+4 for return address
                 end
@@ -225,7 +235,8 @@ module control_unit #(
                     endcase
                 end
 
-                OP_MISC_MEM: begin
+                OP_MISCMEM: begin
+                    is_mscmem = 1'b1;
                     // FENCE instructions - treat as NOP for now
                     // Could add memory ordering logic here
                 end
@@ -257,5 +268,20 @@ module control_unit #(
             endcase
         end
     end
+
+    // Load-stall RS flags
+    // TODO: Find an easier way to calculate has_rs1 and has_rs2
+    wire is_mscmem_or_system_imm = is_mscmem || (is_system && (has_imm || funct3 == 3'b000));
+    // If instruction isn't U-Type, J-Type, MSCMEM, or SYSTEM with IMM, there has to be an RS1
+    wire has_rs1 = (imm_type != IMM_U_OR_J_TYPE) || !is_mscmem_or_system_imm;
+    // If imm_type is S, either we have S-Type instruction or other RV32/64I instruction that always has RS2
+    // When opcode is FOTHER, inst[30] always shows when RS2 isn't used
+    wire has_rs2 = (imm_type == IMM_S_TYPE) || !is_mscmem_or_system_imm || (opcode != OP_FL) || !(opcode == OP_FOTHER && inst[30]); 
+    // All instructions with RS3 have the last three bits of the opcode set to 100
+    wire has_rs3 = (opcode[6:4] == 3'b100)
+
+    assign has_rs1_out = has_rs1;
+    assign has_rs2_out = has_rs2;
+    assign has_rs3_out = has_rs3;
 
 endmodule
