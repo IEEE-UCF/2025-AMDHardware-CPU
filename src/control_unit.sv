@@ -283,5 +283,4 @@ module control_unit #(
     assign has_rs1_out = has_rs1;
     assign has_rs2_out = has_rs2;
     assign has_rs3_out = has_rs3;
-
 endmodule
