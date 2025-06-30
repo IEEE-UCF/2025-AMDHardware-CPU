@@ -8,21 +8,21 @@ module xdecode #(parameter SIZE = 4)(
     end
 endmodule
 
-module imem #(parameter ADDR_BITS = 4, DATA_WIDTH = 32)(
+module imem #(parameter ADDR_BITS = 8, DATA_WIDTH = 32)(
     input  wire                      Clock,
     input  wire                      WriteEnable,
-    input  wire [ADDR_BITS-1:0]     X_addr,
-    input  wire [ADDR_BITS-1:0]     Y_addr,
+    input  wire [ADDR_BITS/2-1:0]     X_addr,
+    input  wire [ADDR_BITS/2-1:0]     Y_addr,
     input  wire [DATA_WIDTH-1:0]    Data_in,
     output reg  [DATA_WIDTH-1:0]    Data_out
 );
-    localparam NUM_ROWS = (1 << ADDR_BITS);
-    localparam NUM_COLS = (1 << ADDR_BITS);
+    localparam NUM_ROWS = (1 << ADDR_BITS/2);
+    localparam NUM_COLS = (1 << ADDR_BITS/2);
     reg [DATA_WIDTH-1:0] memory_array [0:NUM_ROWS-1][0:NUM_COLS-1];
     integer i, j;
     wire [NUM_ROWS-1:0] Xloca, Yloca;
-    xdecode #(ADDR_BITS) xdec (.addr(X_addr), .loc(Xloca));
-    xdecode #(ADDR_BITS) ydec (.addr(Y_addr), .loc(Yloca));
+    xdecode #(ADDR_BITS/2) xdec (.addr(X_addr), .loc(Xloca));
+    xdecode #(ADDR_BITS/2) ydec (.addr(Y_addr), .loc(Yloca));
     initial begin
         for (i = 0; i < NUM_ROWS; i = i + 1) begin
             for (j = 0; j < NUM_COLS; j = j + 1) begin
