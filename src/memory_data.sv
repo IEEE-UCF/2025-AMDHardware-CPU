@@ -7,7 +7,7 @@ module xdecode #(parameter SIZE = 4)(
         loc[addr] = 1'b1;
     end
 endmodule
-module datamem #(parameter ADDR_BITS = 8, DATA_WIDTH = 8)(
+module datamem #(parameter ADDR_BITS = 8, DATA_WIDTH = 64)(
     input  wire                      Clock,
     input  wire                      WriteEnable,
     input  wire [ADDR_BITS/2-1:0]     X_addr,
