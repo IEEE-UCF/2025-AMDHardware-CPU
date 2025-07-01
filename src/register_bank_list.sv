@@ -15,7 +15,6 @@ module register_bank_list #(parameter REG_NUM = 32, DATA_WIDTH = 64)(
     output wire [DATA_WIDTH-1:0]      data_out_b,
     output wire [DATA_WIDTH-1:0]      data_out_gpu
 );
-    // Enable signal for preventing writing to main registers during interrupt
     wire write_en_main;
     assign write_en_main = write_en_cpu & ~interrupt;
 
@@ -54,14 +53,13 @@ module register_bank_list #(parameter REG_NUM = 32, DATA_WIDTH = 64)(
                           );
     
     // Choose to output main or shadow register data depending on context (interrupt)
-    mux_n a_out #(.INPUT_NUM(2)) (.data_in(data_out_a_options),
+    mux_n #(.INPUT_NUM(2)) a_out (.data_in(data_out_a_options),
                                   .sel(interrupt),
                                   .data_out(data_out_a)
                                  );
 
-    mux_n b_out #(.INPUT_NUM(2)) (.data_in(data_out_b_options),
+    mux_n #(.INPUT_NUM(2)) b_out (.data_in(data_out_b_options),
                                   .sel(interrupt),
                                   .data_out(data_out_b)
                                  );
-
 endmodule
