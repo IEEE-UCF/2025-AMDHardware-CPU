@@ -278,7 +278,7 @@ module control_unit #(
     // When opcode is FOTHER, inst[30] always shows when RS2 isn't used
     wire has_rs2 = (imm_type == IMM_S_TYPE) || !is_mscmem_or_system_imm || (opcode != OP_FL) || !(opcode == OP_FOTHER && inst[30]); 
     // All instructions with RS3 have the last three bits of the opcode set to 100
-    wire has_rs3 = (opcode[6:4] == 3'b100)
+    wire has_rs3 = (opcode[6:4] == 3'b100);
 
     assign has_rs1_out = has_rs1;
     assign has_rs2_out = has_rs2;
