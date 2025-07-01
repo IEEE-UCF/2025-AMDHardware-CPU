@@ -37,8 +37,13 @@ VERILOG_SOURCES += $(PWD)/../rtl_utils/fifo.sv
 VERILOG_SOURCES += $(PWD)/../rtl_utils/adder_n.sv
 VERILOG_SOURCES += $(PWD)/../rtl_utils/reset_sync.sv
 
+# Instruction memory interface modules
+VERILOG_SOURCES += $(PWD)/../src/xdecode.sv
+VERILOG_SOURCES += $(PWD)/../src/memory_instruction.sv
+
 # Memory interface modules (create stub versions if needed)
-VERILOG_SOURCES += $(PWD)/memory_stubs.sv
+# Update: Replacement modules exist, this may be depricated for future testbenching
+# VERILOG_SOURCES += $(PWD)/memory_stubs.sv
 
 # Top level module
 TOPLEVEL = cpu_top
@@ -49,8 +54,9 @@ MODULE = cpu_top_tb
 # Verilator specific flags
 ifeq ($(SIM), verilator)
     EXTRA_ARGS += --timescale 1ns/1ps
-    EXTRA_ARGS += --trace
-    EXTRA_ARGS += --trace-structs
+	EXTRA_ARGS += --trace 
+	EXTRA_ARGS += --trace-fst
+	EXTRA_ARGS += --trace-structs
     EXTRA_ARGS += -Wno-WIDTHCONCAT
     EXTRA_ARGS += -Wno-WIDTHEXPAND  
     EXTRA_ARGS += -Wno-CASEINCOMPLETE
@@ -95,6 +101,9 @@ test-interrupt:
 
 test-control:
 	$(MAKE) MODULE=cpu_top_tb TESTCASE=test_control_unit
+
+test-fetch:
+	$(MAKE) TOPLEVEL=stage_if MODULE=stage_if_tb TESTCASE=test_stage_if
 
 # Install dependencies
 install-deps:

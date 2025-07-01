@@ -74,6 +74,7 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, REG_NUM = 32) (
                                      .is_load(is_load),
                                      .rs1_addr(d_inst[19:15]),
                                      .rs2_addr(d_inst[24:20]),
+                                     .rs3_addr(d_inst[31:27]),
                                      .has_rs1(has_rs1),
                                      .has_rs2(has_rs2),
                                      .has_rs3(has_rs3),

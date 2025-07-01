@@ -2,6 +2,8 @@ module stage_if  #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, PC_TYPE_NUM = 4)(
     input  wire                           clk,
     input  wire                           reset,
     input  wire                           stall,
+    input  wire                           inst_w_en,
+    input  wire [INST_WIDTH-1:0]          inst_w_in,
     input  wire [$clog2(PC_TYPE_NUM)-1:0] pc_sel, // Selector for PC: 0 = Plus4, 1 = Branch, 2 = Jump, 3 = Jump Register
     input  wire [ADDR_WIDTH-1:0]          bra_addr,
     input  wire [ADDR_WIDTH-1:0]          jal_addr,
@@ -39,13 +41,16 @@ module stage_if  #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, PC_TYPE_NUM = 4)(
               );
 
     // M3: Conditional instruction fetch from instruction memory
-    // TODO: Write memory instruction such that it returns garbage or filter value if pc_sel indicates not Plus4
-    memory_instruction M3 (.pc(pc_curr),
-                           .pc_sel(pc_sel),
-                           .inst_valid(inst_valid),
-                           .inst_word(inst_word)
+    // pc_curr bits split between X and Y arbitrarily, first two bits ignored due to address incrementing by 4
+    memory_instruction instruction_memory (.Clock(clk),
+                           .WriteEnable(inst_w_en),
+                           .X_addr(pc_curr[5:2]),
+                           .Y_addr(pc_curr[9:6]),
+                           .Data_in(inst_w_in),
+                           .Data_out(inst_word)
                           );
-  
+
+    assign inst_valid = (pc_sel == 2'b00);
     assign pc = pc_curr;
     assign pc4 = pc_next_options[0];
 endmodule

@@ -7,7 +7,7 @@ module reg_if #(parameter ADDR_WIDTH = 64)(
 );
     localparam RESET_ADDR = {ADDR_WIDTH{1'b0}};
 
-    always_ff @(posedge clk) begin
+    always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
             pc_reg <= RESET_ADDR;
         end
