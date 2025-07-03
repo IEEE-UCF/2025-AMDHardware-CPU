@@ -109,7 +109,7 @@ module control_unit #(
                     reg_write = 1'b1;
                     has_imm   = 1'b1;
                     imm_type  = IMM_U_TYPE;
-                    alu_op    = ALU_PASS_B;  // Pass immediate to output
+                    // alu_op    = ALU_PASS_B;  // Pass immediate to output
                 end
 
                 OP_AUIPC: begin
