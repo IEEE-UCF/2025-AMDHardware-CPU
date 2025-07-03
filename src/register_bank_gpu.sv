@@ -23,5 +23,4 @@ module register_bank_gpu #(parameter REG_NUM = 32, DATA_WIDTH = 64)(
             registers[write_addr] <= data_in;
         end
     end
-
 endmodule

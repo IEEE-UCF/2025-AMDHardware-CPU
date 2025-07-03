@@ -9,8 +9,8 @@ module reg_if_to_id #(ADDR_WIDTH = 64, INST_WIDTH = 32) (
     output wire                  inst_buffer_full,
     output wire [ADDR_WIDTH-1:0] d_pc4,
     output wire [ADDR_WIDTH-1:0] d_pc,
-    output wire [INST_WIDTH-1:0] d_inst,
-    output wire [INST_WIDTH-1:0] d_inst_next
+    output wire [INST_WIDTH-1:0] d_inst
+    // output wire [INST_WIDTH-1:0] d_inst_next
 );
 
     reg [ADDR_WIDTH-1:0] pc4_reg;
@@ -44,6 +44,5 @@ module reg_if_to_id #(ADDR_WIDTH = 64, INST_WIDTH = 32) (
                              );
 
     // For now, just assign d_inst_next to d_inst (would need more complex lookahead logic)
-    assign d_inst_next = d_inst;
-
+    // assign d_inst_next = d_inst;
 endmodule

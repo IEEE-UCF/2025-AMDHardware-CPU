@@ -7,9 +7,10 @@ module instruction_buffer #(parameter INST_WIDTH = 32, BUFFER_DEPTH = 8)(
     output wire                  is_empty,
     output wire                  is_full
 );
+    // TODO: Add read_en signal to have buffer only read after stall (when buffer is used to keep next instructions)
     reg [INST_WIDTH-1:0]         inst_buffer [0:BUFFER_DEPTH-1];
     reg [INST_WIDTH-1:0]         inst_curr;
-    reg [INST_WIDTH-1:0]         inst_next;
+    //reg [INST_WIDTH-1:0]         inst_next;
     reg [$clog2(BUFFER_DEPTH):0] write_ptr;
     reg [$clog2(BUFFER_DEPTH):0] read_ptr;
     
@@ -26,6 +27,7 @@ module instruction_buffer #(parameter INST_WIDTH = 32, BUFFER_DEPTH = 8)(
 
     // Combinatorial logic to control read and write operations
     always @(posedge clk) begin
+        // TODO: Have inst_curr always read while read_en only increments read_ptr
         if (reset) begin
             // Reset logic
             write_ptr <= 0;
@@ -45,5 +47,4 @@ module instruction_buffer #(parameter INST_WIDTH = 32, BUFFER_DEPTH = 8)(
     assign data_out = inst_curr;
     assign is_empty = is_empty_flag;
     assign is_full = is_full_flag;
-
 endmodule

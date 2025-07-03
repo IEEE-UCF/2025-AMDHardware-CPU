@@ -62,5 +62,4 @@ module register_bank_list #(parameter REG_NUM = 32, DATA_WIDTH = 64)(
                                   .sel(interrupt),
                                   .data_out(data_out_b)
                                  );
-
 endmodule

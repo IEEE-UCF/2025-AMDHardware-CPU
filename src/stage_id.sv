@@ -6,6 +6,9 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, REG_NUM = 32) (
     input  wire                           w_en,
     input  wire                           w_en_gpu,
     input  wire                           has_imm,
+    input  wire                           has_rs1,
+    input  wire                           has_rs2,
+    input  wire                           has_rs3,
     input  wire [1:0]                     imm_type,
     input  wire [ADDR_WIDTH-1:0]          pc4,
     input  wire [ADDR_WIDTH-1:0]          pc,
@@ -43,7 +46,7 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, REG_NUM = 32) (
     wire [ADDR_WIDTH-1:0] a_file_out;
     wire [ADDR_WIDTH-1:0] b_file_out;
     wire [INST_WIDTH-1:0] d_inst;
-    wire [INST_WIDTH-1:0] d_inst_next;
+    // wire [INST_WIDTH-1:0] d_inst_next;
 
     // M1: Push PC selector back to stage_if
 
@@ -69,8 +72,12 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, REG_NUM = 32) (
     // will send stall for one cycle
     stage_id_stall load_stall_check (.load_rd(load_rd),
                                      .is_load(is_load),
-                                     .rs1_addr(d_inst_next[19:15]),
-                                     .rs2_addr(d_inst_next[24:20]),
+                                     .rs1_addr(d_inst[19:15]),
+                                     .rs2_addr(d_inst[24:20]),
+                                     .rs3_addr(d_inst[31:27]),
+                                     .has_rs1(has_rs1),
+                                     .has_rs2(has_rs2),
+                                     .has_rs3(has_rs3),
                                      .stall(load_stall)
                                     );
 
@@ -87,8 +94,8 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, REG_NUM = 32) (
                      .inst_buffer_full(inst_buffer_full),
                      .d_pc(d_pc),
                      .d_pc4(d_pc4),
-                     .d_inst(d_inst),
-                     .d_inst_next(d_inst_next)
+                     .d_inst(d_inst)
+                     // .d_inst_next(d_inst_next)
                     );
 
 
@@ -144,5 +151,4 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, REG_NUM = 32) (
                                  );
 
     assign read_out_a = a_out;
-    
 endmodule
