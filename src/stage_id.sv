@@ -118,27 +118,31 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, REG_NUM = 32) (
                                       .data_out_gpu(read_out_gpu)
                                      );
     
-    bypass_mux a_bypass (.file_out(a_file_out),
-                             .ex_pro(ex_pro),
-                             .mm_pro(mm_pro),
-                             .mm_mem(mm_mem),
-                             .file_out_rs(d_inst[19:15]),
-                             .ex_pro_rs(ex_pro_rs),
-                             .mm_pro_rs(mm_pro_rs),
-                             .mm_mem_rs(mm_mem_rs),
-                             .bypass_out(a_out)
-                             );
+    bypass_mux a_bypass (.ex_wr_reg_en(ex_wr_reg_en),
+                         .mm_wr_reg_en(mm_wr_reg_en),
+                         .mm_is_load(mm_is_load),
+                         .file_out(a_file_out),
+                         .ex_pro(ex_pro),
+                         .mm_pro(mm_pro),
+                         .mm_mem(mm_mem),
+                         .file_out_rs(d_inst[19:15]),
+                         .ex_rd(ex_rd),
+                         .mm_rd(mm_rd),
+                         .bypass_out(a_out)
+                         );
     
-    bypass_mux b_bypass (.file_out(b_file_out),
-                             .ex_pro(ex_pro),
-                             .mm_pro(mm_pro),
-                             .mm_mem(mm_mem),
-                             .file_out_rs(d_inst[24:20]),
-                             .ex_pro_rs(ex_pro_rs),
-                             .mm_pro_rs(mm_pro_rs),
-                             .mm_mem_rs(mm_mem_rs),
-                             .bypass_out(b_out_options[0])
-                             );
+    bypass_mux b_bypass (.ex_wr_reg_en(ex_wr_reg_en),
+                         .mm_wr_reg_en(mm_wr_reg_en),
+                         .mm_is_load(mm_is_load),
+                         .file_out(b_file_out),
+                         .ex_pro(ex_pro),
+                         .mm_pro(mm_pro),
+                         .mm_mem(mm_mem),
+                         .file_out_rs(d_inst[24:20]),
+                         .ex_rd(ex_rd),
+                         .mm_rd(mm_rd),
+                         .bypass_out(b_out_options[0])
+                         );
 
     imme gen_imme (.inst(d_inst),
                    .imm_type(imm_type),

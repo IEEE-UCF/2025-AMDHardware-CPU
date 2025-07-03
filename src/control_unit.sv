@@ -117,13 +117,10 @@ module control_unit #(
                 OP_LUI: begin
                     reg_write = 1'b1;
                     has_imm   = 1'b1;
-<<<<<<< HEAD
                     imm_type  = IMM_U_TYPE;
                     // alu_op    = ALU_PASS_B;  // Pass immediate to output
-=======
                     imm_type  = IMM_U_OR_J_TYPE;
                     alu_op    = ALU_PASS_B;  // Pass immediate to output
->>>>>>> origin/main
                 end
 
                 OP_AUIPC: begin
