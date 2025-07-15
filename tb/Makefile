@@ -129,3 +129,8 @@ help:
 	@echo "  WAVES=1         - Enable waveform dumping"
 
 .PHONY: clean-extra help install-deps test-reset test-arithmetic test-memory test-branch test-jump test-stall test-interrupt test-control
+
+# GPU interface modules
+VERILOG_SOURCES += $(PWD)/../src/gpu_op_queue.sv
+VERILOG_SOURCES += $(PWD)/../src/gpu_result_buffer.sv
+VERILOG_SOURCES += $(PWD)/../src/gpu_result_wb.sv
