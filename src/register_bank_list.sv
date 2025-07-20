@@ -32,6 +32,9 @@ module register_bank_list #(parameter REG_NUM = 32, DATA_WIDTH = 64)(
                             .data_out_b(data_out_b_options[0])
                            );
     //TODO: Build post-interrupt behavior to handle inconsistent data between main and shadow for future interrupt handling
+    // Interrupt within an interrupt:
+    //  Software: Push to stack
+    //  Hardware: Use multiple shadow register sets
     register_bank_cpu shadow (.clk(clk),
                               .reset(reset),
                               .write_addr(write_addr_cpu),

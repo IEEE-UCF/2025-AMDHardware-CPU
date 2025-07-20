@@ -1,6 +1,7 @@
 module memory_instruction #(parameter ADDR_BITS = 4, DATA_WIDTH = 32)(
     input  wire                     Clock,
     input  wire                     WriteEnable,
+    input  wire                     ReadEnable,
     input  wire [ADDR_BITS-1:0]     X_addr,
     input  wire [ADDR_BITS-1:0]     Y_addr,
     input  wire [DATA_WIDTH-1:0]    Data_in,
@@ -24,7 +25,7 @@ module memory_instruction #(parameter ADDR_BITS = 4, DATA_WIDTH = 32)(
         if (WriteEnable &&(X_addr < NUM_ROWS) && (Y_addr < NUM_COLS)) begin
             memory_array[X_addr][Y_addr] <= Data_in;
         end       
-        if ((X_addr < NUM_ROWS) && (Y_addr < NUM_COLS)) begin
+        if (ReadEnable && (X_addr < NUM_ROWS) && (Y_addr < NUM_COLS)) begin
             Data_out = memory_array[X_addr][Y_addr];
         end else begin
             Data_out = {DATA_WIDTH{1'bx}};

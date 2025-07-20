@@ -1,13 +1,21 @@
 module control_unit #(
     parameter INST_WIDTH = 32,
+    parameter ADDR_WIDTH = 64,
     parameter PC_TYPE_NUM = 4,
     parameter IMM_TYPE_NUM = 4,
     parameter REG_NUM = 32
 )(
     input  wire [INST_WIDTH-1:0]          instruction,
+    input  wire                           pre_instruction, // IF to ID
     input  wire                           inst_valid,
+    input  wire                           pre_inst_valid, // IF to ID
+    input  wire [ADDR_WIDTH-1:0]          pc_next,
+    input  wire [ADDR_WIDTH-1:0]          pc_next_correct,
     input  wire                           stall,
     input  wire                           is_equal,      // From branch comparison
+    input  wire                           buffer_active,
+    input  wire                           branch_predict,
+    input  wire                           branch_prediction,
     
     // Control outputs
     output reg                            reg_write,
@@ -17,11 +25,13 @@ module control_unit #(
     output reg                            has_imm,
     output reg [1:0]                      imm_type,
     output reg [$clog2(PC_TYPE_NUM)-1:0]  pc_sel,
+    output reg                            pc_unstable_type,
     output reg                            is_load,
     output reg                            is_store,
+    output reg                            pre_is_branch,
     output reg                            is_branch,
     output reg                            is_jump,
-    output reg                            is_system,
+    output reg                            is_system,             
     
     // Register addresses
     output wire [4:0]                     rd,
@@ -36,9 +46,18 @@ module control_unit #(
     // Flags for detecting rs1, rs2, and rs3 in stage_id_stall's load-stall check
     output wire                           has_rs1_out,
     output wire                           has_rs2_out,
-    output wire                           has_rs3_out  
+    output wire                           has_rs3_out,
+
+    output wire                           pc_match,
+    output wire                           pc_override
 );
-    reg is_mscmem;
+    reg  is_mscmem;
+    reg  pc_unstable;
+
+    assign pc_match = (pc_next == pc_next_correct);
+
+    wire [6:0] pre_opcode;
+    assign pre_opcode = pre_instruction[6:0];
 
     // Extract instruction fields
     assign opcode = instruction[6:0];
@@ -84,15 +103,47 @@ module control_unit #(
 
     // PC Selection
     localparam PC_PLUS4   = 2'b00;
-    localparam PC_BRANCH  = 2'b01;
-    localparam PC_JAL     = 2'b10;
+    localparam PC_JAL     = 2'b01;
+    localparam PC_BRANCH  = 2'b10;
     localparam PC_JALR    = 2'b11;
 
     // Immediate Types (matching imme.sv)
-    localparam IMM_I_TYPE = 2'b00;  // I-type immediate
-    localparam IMM_SHIFT  = 2'b01;  // Shift immediate
-    localparam IMM_S_TYPE = 2'b10;  // S-type immediate
+    localparam IMM_I_TYPE      = 2'b00;  // I-type immediate
+    localparam IMM_SHIFT       = 2'b01;  // Shift immediate
+    localparam IMM_S_TYPE      = 2'b10;  // S-type immediate
     localparam IMM_U_OR_J_TYPE = 2'b11;  // U-type immediate
+
+    // pc_sel (pre_stage_id) logic
+    always_comb begin
+        pc_sel = PC_PLUS4;
+        pre_is_branch = 1'b0;
+        if (pre_inst_valid && !stall) begin
+            case (pre_opcode)
+                OP_JAL: begin
+                    pc_sel = PC_JAL;
+                end
+                OP_JALR: begin
+                    pc_sel = PC_JALR;
+                end
+                OP_BRANCH: begin
+                    pre_is_branch = 1'b1;
+                    if (buffer_active) begin
+                        pc_sel = branch_prediction ? PC_BRANCH : PC_PLUS4
+                    end else begin
+                        case (funct3)
+                            3'b000:  pc_sel = is_equal  ? PC_BRANCH : PC_PLUS4; // BEQ
+                            3'b001:  pc_sel = !is_equal ? PC_BRANCH : PC_PLUS4; // BNE
+                            3'b100:  pc_sel = is_equal  ? PC_BRANCH : PC_PLUS4; // BLT (simplified)
+                            3'b101:  pc_sel = !is_equal ? PC_BRANCH : PC_PLUS4; // BGE (simplified)
+                            3'b110:  pc_sel = is_equal  ? PC_BRANCH : PC_PLUS4;  // BLTU (simplified)
+                            3'b111:  pc_sel = !is_equal ? PC_BRANCH : PC_PLUS4; // BGEU (simplified)
+                            default: pc_sel = PC_PLUS4;
+                        endcase
+                    end
+                end 
+            endcase
+        end
+    end
 
     // Main control logic
     always_comb begin
@@ -103,7 +154,8 @@ module control_unit #(
         alu_op    = ALU_ADD;
         has_imm   = 1'b0;
         imm_type  = IMM_I_TYPE;
-        pc_sel    = PC_PLUS4;
+        pc_unstable      = 1'b0;
+        pc_unstable_type = 1'b0;
         is_load   = 1'b0;
         is_store  = 1'b0;
         is_branch = 1'b0;
@@ -132,7 +184,6 @@ module control_unit #(
                     reg_write = 1'b1;
                     is_jump   = 1'b1;
                     imm_type  = IMM_U_OR_J_TYPE; // Determines when instruction has rs1 in stage_id_stall
-                    pc_sel    = PC_JAL;
                     alu_op    = ALU_PASS_A;  // Pass PC+4 for return address
                 end
 
@@ -141,22 +192,16 @@ module control_unit #(
                     has_imm   = 1'b1;
                     imm_type  = IMM_I_TYPE;
                     is_jump   = 1'b1;
-                    pc_sel    = PC_JALR;
+                    pc_unstable = 1'b1;
+                    pc_unstable_type = 1'b1;
                     alu_op    = ALU_PASS_A;  // Pass PC+4 for return address
                 end
 
                 OP_BRANCH: begin
-                    is_branch = 1'b1;
+                    is_branch        = 1'b1;
+                    pc_unstable      = 1'b1;
+                    pc_unstable_type = 1'b0;
                     // Branch taken based on condition and is_equal signal
-                    case (funct3)
-                        3'b000: pc_sel = is_equal ? PC_BRANCH : PC_PLUS4;      // BEQ
-                        3'b001: pc_sel = !is_equal ? PC_BRANCH : PC_PLUS4;     // BNE
-                        3'b100: pc_sel = is_equal ? PC_BRANCH : PC_PLUS4;      // BLT (simplified)
-                        3'b101: pc_sel = !is_equal ? PC_BRANCH : PC_PLUS4;     // BGE (simplified)
-                        3'b110: pc_sel = is_equal ? PC_BRANCH : PC_PLUS4;      // BLTU (simplified)
-                        3'b111: pc_sel = !is_equal ? PC_BRANCH : PC_PLUS4;     // BGEU (simplified)
-                        default: pc_sel = PC_PLUS4;
-                    endcase
                     alu_op = ALU_EQ;  // Use ALU for comparison
                 end
 
@@ -268,6 +313,8 @@ module control_unit #(
             endcase
         end
     end
+
+    assign pc_override = pc_unstable && !pc_match && branch_predict;
 
     // Load-stall RS flags
     // TODO: Find an easier way to calculate has_rs1 and has_rs2

@@ -10,6 +10,7 @@ module cpu_top #(
     input  logic                      clk,
     input  logic                      rst_n,
     input  logic                      interrupt,
+    input  logic                      stall, // Universal stall from GPU in case CPU must wait (could come from GPU handler in here)
     
     // Instruction Memory Interface
     output logic [ADDR_WIDTH-1:0]   imem_addr,
@@ -25,6 +26,45 @@ module cpu_top #(
     input  logic [DATA_WIDTH-1:0]   dmem_read_data,
     input  logic                     dmem_ready
 );
+
+    // Start of stage_if_to_id components (Note: Other in-between components should also go in cpu_top)
+    // Have register IF to ID for pipeline stage
+    // Stall if load_rd from execute has register being read
+
+    // TODO: Maybe update stage_id_stall to check opcode if it's reading registers
+    // Change rs1 and rs2 to read_addr_a and read_addr_b for consistency with register banks
+    // NOTE: If d_inst is reset value ('0), loading to register 0 (which shouldn't happen anyway)
+    // will send stall for one cycle
+    /* 
+    stage_id_stall load_stall_check (.load_rd(ex_rd), // From reg_id_to_ex (taken from stage_id)
+                                     .stage_ex_stall(stage_ex_stall) // From cu or ex, preventing decode stall if execute stalls
+                                     .is_load(is_load), // From reg_id_to_ex (taken from control_unit)
+                                     .rs1_addr(d_inst[19:15]), // From reg_if_to_id (taken from stage_if)
+                                     .rs2_addr(d_inst[24:20]), // From reg_if_to_id (taken from stage_if)
+                                     .rs3_addr(d_inst[31:27]), // From reg_if_to_id (taken from stage_if)
+                                     .has_rs1(has_rs1), // From control_unit
+                                     .has_rs2(has_rs2), // From control_unit
+                                     .has_rs3(has_rs3), // From control_unit
+                                     .stall(load_stall) // Output
+                                    );
+
+    assign reg_stall = stall | load_stall; //
+    
+    reg_if_to_id reg_if_to_id (.clk(clk),
+                               .reset(reset),
+                               .stall(reg_stall),
+                               .stage_if_stall(stage_if_stall), // Only used in case buffer is full during use
+                               .pc4(pc4),
+                               .pc(pc),
+                               .inst(inst),
+                               .inst_buffer_empty(inst_buffer_empty),
+                               .inst_buffer_full(inst_buffer_full),
+                               .d_pc(d_pc),
+                               .d_pc4(d_pc4),
+                               .d_inst(d_inst)
+                            // .d_inst_next(d_inst_next)
+                              );
+                              */
 
     // Internal pipeline signals
     logic [INST_WIDTH-1:0]   inst_id_ex;
