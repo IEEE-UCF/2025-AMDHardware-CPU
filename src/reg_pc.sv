@@ -1,7 +1,9 @@
-module reg_if #(parameter ADDR_WIDTH = 64)(
+module reg_pc #(parameter ADDR_WIDTH = 64)(
     input  wire                  clk,
     input  wire                  reset,
     input  wire                  stall,
+    input  wire                  if_buffer_stall,
+    input  wire                  if_load_stall,
     input  wire [ADDR_WIDTH-1:0] pc_next,
     output reg  [ADDR_WIDTH-1:0] pc_reg
 );
@@ -11,7 +13,7 @@ module reg_if #(parameter ADDR_WIDTH = 64)(
         if (reset) begin
             pc_reg <= RESET_ADDR;
         end
-        else if (stall) begin
+        else if (stall || if_buffer_stall || ) begin
             pc_reg <= pc_reg;
         end
         else begin
