@@ -87,7 +87,6 @@ make SIM=ghdl    # Use GHDL (for mixed language)
 
 - `cpu_top_tb.py` - Main testbench with all test cases
 - `Makefile` - Build configuration for cocotb
-- `memory_stubs.sv` - Stub modules for missing components
 - `requirements.txt` - Python dependencies
 - `README.md` - This file
 

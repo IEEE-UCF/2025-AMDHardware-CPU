@@ -90,7 +90,7 @@ dispatcher:
 
 .PHONY: coprocessor
 coprocessor:
-	$(MAKE) TOPLEVEL=coprocessor MODULE=coprocessor_tb SIM_BUILD=sim_build_coprocessor
+	$(MAKE) TOPLEVEL=coprocessor_system MODULE=coprocessor_simple_tb SIM_BUILD=sim_build_coprocessor
 
 .PHONY: pipeline_stages
 pipeline_stages:
