@@ -2,7 +2,7 @@ module reg_ex_to_mm #(
     parameter DATA_WIDTH = 32
 )(
     input  logic                  clk,
-    input  logic                  rst,
+    input  logic                  rst_n,
     // Inputs from EX stage
     input  logic                  reg_write_in,
     input  logic                  mem_read_in,
@@ -19,8 +19,8 @@ module reg_ex_to_mm #(
     output logic [4:0]            rd_out
 );
 
-always_ff @(posedge clk or posedge rst) begin
-    if (rst) begin
+always_ff @(posedge clk or negedge rst_n) begin
+    if (rst_n) begin
         reg_write_out   <= 0;
         mem_read_out    <= 0;
         mem_write_out   <= 0;
@@ -43,7 +43,7 @@ module reg_id_to_ex #(
     parameter DATA_WIDTH = 32
 )(
     input  logic                  clk,
-    input  logic                  rst,
+    input  logic                  rst_n,
     // Control signals
     input  logic                  reg_write_in,
     input  logic                  mem_read_in,
@@ -70,8 +70,8 @@ module reg_id_to_ex #(
     output logic [4:0]            rs2_out
 );
 
-always_ff @(posedge clk or posedge rst) begin
-    if (rst) begin
+always_ff @(posedge clk or negedge rst_n) begin
+    if (rst_n) begin
         reg_write_out <= 0;
         mem_read_out  <= 0;
         mem_write_out <= 0;
@@ -173,7 +173,7 @@ module reg_mm_to_wb #(
     parameter DATA_WIDTH = 64
 )(
     input  logic                  clk,
-    input  logic                  rst,
+    input  logic                  rst_n,
     // Inputs from MM stage
     input  logic [DATA_WIDTH-1:0] mem_data_in,
     input  logic [DATA_WIDTH-1:0] alu_result_in,
@@ -186,8 +186,8 @@ module reg_mm_to_wb #(
     output logic                  reg_write_out
 );
 
-always_ff @(posedge clk or posedge rst) begin
-    if (rst) begin
+always_ff @(posedge clk or negedge rst_n) begin
+    if (rst_n) begin
         mem_data_out   <= 0;
         alu_result_out <= 0;
         rd_out         <= 0;

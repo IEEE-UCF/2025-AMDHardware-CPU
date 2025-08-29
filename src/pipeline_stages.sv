@@ -271,7 +271,7 @@ module mm_stage #(
     parameter ADDR_WIDTH = 64
 )(
     input wire clk,
-    input wire rst,
+    input wire rst_n,
 
     // Inputs from EX/MEM pipeline register
     input wire [DATA_WIDTH-1:0] ex_mem_alu_result,
@@ -295,8 +295,8 @@ module mm_stage #(
     output reg mem_wb_reg_write
 );
 
-always @(posedge clk or posedge rst) begin
-    if (rst) begin
+always @(posedge clk or negedge rst_n) begin
+    if (rst_n) begin
         mem_addr         <= 0;
         mem_write_data   <= 0;
         mem_read         <= 0;
