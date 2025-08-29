@@ -1,8 +1,8 @@
-# Holy CPU Documentation
+# IEEE CPU Documentation
 
 ## Overview
 
-The Holy CPU is a high-performance RISC-V compatible processor with advanced coprocessor offload capabilities. The design features a pipelined architecture with integrated floating-point, system control, and memory management coprocessors.
+The IEEE CPU is a high-performance RISC-V compatible processor with advanced coprocessor offload capabilities. The design features a pipelined architecture with integrated floating-point, system control, and memory management coprocessors.
 
 ## Architecture Components
 
@@ -54,12 +54,9 @@ src/
 ├── cpu_top.sv              # Top-level CPU module
 ├── pipeline_stages.sv      # Pipeline stage implementations
 ├── control_unit.sv         # Main control unit
-├── dispatcher.sv           # Basic coprocessor dispatcher
-├── coprocessor_system.sv   # Coprocessor integration
-├── offload_stall_handler.sv    # Offload stall management
-├── offload_destination_table.sv # Instruction tracking
-├── offload_manager.sv      # Unified offload interface
-└── coprocessor_*.sv        # Individual coprocessor modules
+├── dispatcher.sv           # Basic coprocessor dispatcher 
+├── offload_logic.sv        # Unified offload interface
+└── coprocessor.sv          # Individual coprocessor modules
 
 rtl_utils/
 ├── fifo.sv                 # FIFO implementations
@@ -75,7 +72,7 @@ tb/
 docs/
 ├── README.md              # This file
 ├── offload_system.md      # Offload system documentation
-├── cpu_architecture.md   # Architecture details
+├── cpu_architecture.md    # Architecture details
 ├── cpu_instruction_set.md # ISA documentation
 └── memory_map.md          # Memory layout
 ```
