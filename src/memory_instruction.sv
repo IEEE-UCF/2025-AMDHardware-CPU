@@ -10,9 +10,6 @@ module memory_instruction #(parameter ADDR_BITS = 8, DATA_WIDTH = 32)(
     localparam NUM_COLS = (1 << ADDR_BITS/2);
     reg [DATA_WIDTH-1:0] memory_array [0:NUM_ROWS-1][0:NUM_COLS-1];
     integer i, j;
-    wire [NUM_ROWS-1:0] Xloca, Yloca;
-    xdecode #(ADDR_BITS/2) xdec (.addr(X_addr), .loc(Xloca));
-    xdecode #(ADDR_BITS/2) ydec (.addr(Y_addr), .loc(Yloca));
     initial begin
         for (i = 0; i < NUM_ROWS; i = i + 1) begin
             for (j = 0; j < NUM_COLS; j = j + 1) begin

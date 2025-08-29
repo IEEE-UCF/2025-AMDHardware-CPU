@@ -125,7 +125,7 @@ module cpu_top #(
         .DATA_WIDTH(DATA_WIDTH),
         .INST_WIDTH(INST_WIDTH),
         .CP_NUM(3)
-    ) coprocessor_sys (
+    ) coprocessor_inst (
         .clk(clk),
         .rst_n(rst_n),
         .cp_valid(cp_sys_valid),
