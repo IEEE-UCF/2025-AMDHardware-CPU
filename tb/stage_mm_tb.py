@@ -4,12 +4,12 @@ from cocotb.triggers import RisingEdge
 from cocotb.clock import Clock
 
 async def reset_cpu(dut):
-    dut.rst_n.value = 1
-    await RisingEdge(dut.clk)
     dut.rst_n.value = 0
+    await RisingEdge(dut.clk)
+    dut.rst_n.value = 1
 
 @cocotb.test()
-async def test_stage_ex(dut):
+async def test_stage_mm(dut):
     """Testing memory writing and reading"""
     
     # Clock start
@@ -42,9 +42,9 @@ async def test_stage_ex(dut):
     dut.ex_mem_mem_write.value = 0
     
     # Read each memory address
-     dut._log.info("Reading Addresses...")
+    dut._log.info("Reading Addresses...")
     for i in range(ADDRS + 1):
         dut.ex_mem_alu_result.value = i
         await RisingEdge(dut.clk)
         if (i != 0):    
-            assert dut.ex_mem_read_data.value.integer == i, "Read failed!\nExpected: %s\nActual: %s", i, dut.ex_mem_read_data.value.integer
+            assert dut.ex_mem_read_data.value.integer == i, f"Read failed!\nExpected: {i}\nActual: {dut.ex_mem_read_data.value.integer}"

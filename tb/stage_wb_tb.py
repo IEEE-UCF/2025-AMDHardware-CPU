@@ -4,12 +4,12 @@ from cocotb.triggers import RisingEdge
 from cocotb.clock import Clock
 
 async def reset_cpu(dut):
-    dut.rst_n.value = 1
-    await RisingEdge(dut.clk)
     dut.rst_n.value = 0
+    await RisingEdge(dut.clk)
+    dut.rst_n.value = 1
 
 @cocotb.test()
-async def test_stage_ex(dut):
+async def test_stage_wb(dut):
     """Testing memory writing and reading"""
     
     # Clock start
@@ -36,10 +36,10 @@ async def test_stage_ex(dut):
     dut.wdata.value = 1
     await RisingEdge(dut.clk)
     
-    assert dut.wmem2reg.value.integer == WMEM, "Mux failure!\nExpected: %s\nActual: %s", WMEM, dut.wmem2reg.value.integer
+    assert dut.wmem2reg.value.integer == WMEM, f"Mux failure!\nExpected: {WMEM}\nActual: {dut.wmem2reg.value.integer}"
     
     # MUX at 0
     dut.wdata.value = 0
     await RisingEdge(dut.clk)
     
-    assert dut.wmem2reg.value.integer == WALU, "Mux failure!\nExpected: %s\nActual: %s", WALU, dut.wmem2reg.value.integer
+    assert dut.wmem2reg.value.integer == WALU, f"Mux failure!\nExpected: {WALU}\nActual: {dut.wmem2reg.value.integer}"

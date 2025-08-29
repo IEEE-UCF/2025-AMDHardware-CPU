@@ -4,9 +4,9 @@ from cocotb.triggers import RisingEdge
 from cocotb.clock import Clock
 
 async def reset_cpu(dut):
-    dut.rst_n.value = 1
-    await RisingEdge(dut.clk)
     dut.rst_n.value = 0
+    await RisingEdge(dut.clk)
+    dut.rst_n.value = 1
 
 @cocotb.test()
 async def test_stage_ex(dut):
@@ -47,8 +47,8 @@ async def test_stage_ex(dut):
         # Run 2: ea = 0 | eb = R
         # Run 3: ea = R | eb = 0
         # Run 4: ea = R | eb = R
-        ea = (i < 2) ? 0 : random.randint(-MAX_DATA_VAL,MAX_DATA_VAL-1)
-        eb = (i == 0 or i == 2) ? random.randint(-MAX_DATA_VAL,MAX_DATA_VAL-1) : 0
+        ea = 0 if (i < 2) else random.randint(-MAX_DATA_VAL,MAX_DATA_VAL-1)
+        eb = random.randint(-MAX_DATA_VAL,MAX_DATA_VAL-1) if (i == 0 or i == 2) else 0
         dut.ea.value = ea
         dut.eb.value = eb
         
@@ -109,7 +109,7 @@ async def test_stage_ex(dut):
             
             # Past clock cycle 1
             if (i != 0):
-                assert alu_out == dut.eal.value.integer, "Output mismatch!\nExpected: %s\nActual: %s", alu_out, dut.eal.value.integer
+                assert alu_out == dut.eal.value.integer, f"Output mismatch!\nExpected: {alu_out} \nActual: {dut.ela.value.integer}"
             
             alu_out = exp_out
     
@@ -123,4 +123,4 @@ async def test_stage_ex(dut):
     await RisingEdge(dut.clk)
     await RisingEdge(dut.clk)
     
-    assert dut.eal.value.integer == 1, "ecall output failed!\nExpected: %s\nActual: %s", 1, dut.alu.value.integer
+    assert dut.eal.value.integer == 1, f"ecall output failed!\nExpected: {1}\nActual: {dut.alu.value.integer}"
