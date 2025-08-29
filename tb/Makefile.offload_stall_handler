@@ -1,0 +1,55 @@
+# Makefile for Offload Stall Handler testbench
+
+# Simulator selection
+SIM ?= verilator
+
+# Default language 
+TOPLEVEL_LANG ?= verilog
+
+# Source files
+VERILOG_SOURCES += $(PWD)/../src/offload_stall_handler.sv
+
+# Top level module
+TOPLEVEL = offload_stall_handler
+
+# Python test module
+MODULE = offload_stall_handler_tb
+
+# Testbench settings
+WAVES ?= 1
+GUI ?= 0
+
+# Verilator specific flags
+ifeq ($(SIM), verilator)
+    COMPILE_ARGS += --trace --trace-structs
+    COMPILE_ARGS += -Wall -Wno-fatal
+    EXTRA_ARGS += --trace-max-array 1024
+endif
+
+# Include cocotb makefiles
+include $(shell cocotb-config --makefiles)/Makefile.sim
+
+# Clean target
+clean-offload:
+	rm -f *.vcd
+	rm -f sim_build
+	rm -rf __pycache__
+	rm -f results.xml
+
+.PHONY: clean-offload
+
+# Help
+help-offload:
+	@echo "Offload Stall Handler Testbench"
+	@echo "Usage: make [target] [variables]"
+	@echo ""
+	@echo "Targets:"
+	@echo "  test          - Run all tests"
+	@echo "  clean-offload - Clean build files"
+	@echo "  help-offload  - Show this help"
+	@echo ""
+	@echo "Variables:"
+	@echo "  SIM=<sim>     - Simulator (verilator, icarus)"
+	@echo "  WAVES=1       - Enable waveform generation"
+	@echo "  GUI=1         - Enable GUI mode"
+	@echo ""
