@@ -94,7 +94,7 @@ async def test_stage_ex(dut):
             await Timer(1, units="ns")
             
             # Check if output matches expectation
-            assert exp_out == dut.eal.value.integer, f"Output mismatch!\nExpected: {exp_out} \nActual: {dut.ela.value.integer}"
+            assert exp_out == dut.eal.value.integer, f"Output mismatch!\nOP: {dut.ealuc.value}\nExpected: {exp_out}\nActual: {dut.ela.value.integer}"
     
     # Check eal when ecall is 1
     dut.ecall.value = 1
