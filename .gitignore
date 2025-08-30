@@ -19,7 +19,7 @@ verilated*.h
 *.fsdb
 *.wlf
 *.ghw
-sim_build/
+sim_build*/
 
 # Python cache and compiled files
 __pycache__/
