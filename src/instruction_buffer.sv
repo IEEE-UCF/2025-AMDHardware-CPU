@@ -1,6 +1,6 @@
 module instruction_buffer #(parameter INST_WIDTH = 32, BUFFER_DEPTH = 8)(
     input  wire                  clk,          
-    input  wire                  reset,        
+    input  wire                  rst_n,        
     input  wire                  write_en,     
     input  wire [INST_WIDTH-1:0] data_in,      
     output wire [INST_WIDTH-1:0] data_out,
@@ -26,9 +26,9 @@ module instruction_buffer #(parameter INST_WIDTH = 32, BUFFER_DEPTH = 8)(
     assign is_full_flag     = (~upper_bit_equal & lower_bits_equal); // If same pos but looped over, must be full (Circular buffer)
 
     // Combinatorial logic to control read and write operations
-    always @(posedge clk) begin
+    always @(posedge clk or negedge rst_n) begin
         // TODO: Have inst_curr always read while read_en only increments read_ptr
-        if (reset) begin
+        if (rst_n) begin
             // Reset logic
             write_ptr <= 0;
             read_ptr <= 0;

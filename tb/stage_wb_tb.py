@@ -1,45 +1,35 @@
 import cocotb
 import random
-from cocotb.triggers import RisingEdge
-from cocotb.clock import Clock
-
-async def reset_cpu(dut):
-    dut.rst_n.value = 0
-    await RisingEdge(dut.clk)
-    dut.rst_n.value = 1
+from cocotb.triggers import Timer
 
 @cocotb.test()
 async def test_stage_wb(dut):
-    """Testing memory writing and reading"""
+    """Testing write-back stage MUX functionality"""
     
-    # Clock start
-    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
-    
-    # Reset procedure 
-    """
-    await reset_cpu(dut)
-    dut._log.info("Reset Complete\n")
-    """
+    # Stage WB is a pure combinational module, no clock needed
     
     # Constraints:
     # Arbitrary ALU value
-    WALU = 0
-    # Arbitrary MEM value
-    WMEM = 1
+    WALU = 0x12345678
+    # Arbitrary MEM value  
+    WMEM = 0xDEADBEEF
     
-    # Testing MUX
-    dut._log.info("Testing MUX")
+    dut._log.info("Testing Write-Back Stage MUX")
+    
+    # Testing MUX - select ALU data
     dut.walu.value = WALU
     dut.wmem.value = WMEM
+    dut.wmem2reg.value = 0  # Select ALU
     
-    # MUX at 1
-    dut.wdata.value = 1
-    await RisingEdge(dut.clk)
+    await Timer(1, units="ns")  # Allow combinational logic to settle
     
-    assert dut.wmem2reg.value.integer == WMEM, f"Mux failure!\nExpected: {WMEM}\nActual: {dut.wmem2reg.value.integer}"
+    assert dut.wdata.value.integer == WALU, f"ALU select failed: expected {WALU:08x}, got {dut.wdata.value.integer:08x}"
     
-    # MUX at 0
-    dut.wdata.value = 0
-    await RisingEdge(dut.clk)
+    # Testing MUX - select MEM data
+    dut.wmem2reg.value = 1  # Select MEM
     
-    assert dut.wmem2reg.value.integer == WALU, f"Mux failure!\nExpected: {WALU}\nActual: {dut.wmem2reg.value.integer}"
+    await Timer(1, units="ns")  # Allow combinational logic to settle
+    
+    assert dut.wdata.value.integer == WMEM, f"MEM select failed: expected {WMEM:08x}, got {dut.wdata.value.integer:08x}"
+    
+    dut._log.info("Write-Back Stage test completed successfully")
