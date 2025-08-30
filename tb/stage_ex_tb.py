@@ -1,23 +1,10 @@
 import cocotb
+from cocotb.triggers import Timer
 import random
-from cocotb.triggers import RisingEdge
-from cocotb.clock import Clock
-
-async def reset_cpu(dut):
-    dut.rst_n.value = 0
-    await RisingEdge(dut.clk)
-    dut.rst_n.value = 1
 
 @cocotb.test()
 async def test_stage_ex(dut):
     """Testing data processing across all coprocessors"""
-    
-    # Clock start
-    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
-    
-    # Reset procedure
-    await reset_cpu(dut)
-    dut._log.info("Reset Complete\n")
     
     # Constraints:
     # Number of input combo runs
@@ -35,10 +22,9 @@ async def test_stage_ex(dut):
     # Number of possible operations
     OP_NUM = 19
     
-    alu_out = 0
-    
+    dut._log.info("ALU Operations\n")
+    # Turn off ecall for ALU output checks
     dut.ecall.value = 0
-    
     # For each set of inputs
     for i in range(INPUT_RUNS + 1):
         dut._log.info("Test %s", i+1)
@@ -46,7 +32,7 @@ async def test_stage_ex(dut):
         # Run 1: ea = 0 | eb = 0
         # Run 2: ea = 0 | eb = R
         # Run 3: ea = R | eb = 0
-        # Run 4: ea = R | eb = R
+        # Run X: ea = R | eb = R (X > 3)
         ea = 0 if (i < 2) else random.randint(-MAX_DATA_VAL,MAX_DATA_VAL-1)
         eb = random.randint(-MAX_DATA_VAL,MAX_DATA_VAL-1) if (i == 0 or i == 2) else 0
         dut.ea.value = ea
@@ -105,13 +91,10 @@ async def test_stage_ex(dut):
                 case _: # If invalid, return 0
                     exp_out = 0
             
-            await RisingEdge(dut.clk)
+            await Timer(1, units="ns")
             
-            # Past clock cycle 1
-            if (i != 0):
-                assert alu_out == dut.eal.value.integer, f"Output mismatch!\nExpected: {alu_out} \nActual: {dut.ela.value.integer}"
-            
-            alu_out = exp_out
+            # Check if output matches expectation
+            assert exp_out == dut.eal.value.integer, f"Output mismatch!\nOP: {dut.ealuc.value}\nExpected: {exp_out}\nActual: {dut.ela.value.integer}"
     
     # Check eal when ecall is 1
     dut.ecall.value = 1
@@ -120,7 +103,5 @@ async def test_stage_ex(dut):
     dut.ealuc.value = 0
     dut.epc4.value = 1
     
-    await RisingEdge(dut.clk)
-    await RisingEdge(dut.clk)
-    
+    # Check if eal switched to pc4 value
     assert dut.eal.value.integer == 1, f"ecall output failed!\nExpected: {1}\nActual: {dut.alu.value.integer}"
