@@ -100,7 +100,7 @@ endmodule
 
 module reg_if_to_id #(ADDR_WIDTH = 64, INST_WIDTH = 32) (
     input  wire                  clk,
-    input  wire                  reset,
+    input  wire                  rst_n,
     input  wire                  stall,
     input  wire [ADDR_WIDTH-1:0] pc4,
     input  wire [ADDR_WIDTH-1:0] pc,
@@ -116,8 +116,8 @@ module reg_if_to_id #(ADDR_WIDTH = 64, INST_WIDTH = 32) (
     reg [ADDR_WIDTH-1:0] pc4_reg;
     reg [ADDR_WIDTH-1:0] pc_reg;
 
-    always_ff @(posedge clk) begin
-        if (reset) begin
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (rst_n) begin
             pc4_reg <= {ADDR_WIDTH{1'b0}};
             pc_reg <= {ADDR_WIDTH{1'b0}};
         end
@@ -135,7 +135,7 @@ module reg_if_to_id #(ADDR_WIDTH = 64, INST_WIDTH = 32) (
     assign d_pc = pc_reg;
 
     instruction_buffer insts (.clk(clk),
-                              .reset(reset),
+                              .rst_n(rst_n),
                               .write_en(~stall),
                               .data_in(inst),
                               .data_out(d_inst),
@@ -149,15 +149,15 @@ endmodule
 
 module reg_if #(parameter ADDR_WIDTH = 64)(
     input  wire                  clk,
-    input  wire                  reset,
+    input  wire                  rst_n,
     input  wire                  stall,
     input  wire [ADDR_WIDTH-1:0] pc_next,
     output reg  [ADDR_WIDTH-1:0] pc_reg
 );
     localparam RESET_ADDR = {ADDR_WIDTH{1'b0}};
 
-    always_ff @(posedge clk or posedge reset) begin
-        if (reset) begin
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (rst_n) begin
             pc_reg <= RESET_ADDR;
         end
         else if (stall) begin
