@@ -1,61 +1,62 @@
-module pl_stage_exe #(parameter DATA_WIDTH = 64)(
-    input  wire [DATA_WIDTH-1:0] ea,
-    input  wire [DATA_WIDTH-1:0] eb,
-    input  wire [DATA_WIDTH-1:0] epc4,
-    input  wire [4:0]            ealuc,
-    input  wire                  ecall,
-    output wire [DATA_WIDTH-1:0] eal
+module stage_if  #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, PC_TYPE_NUM = 4)(
+    input  wire                           clk,
+    input  wire                           reset,
+    input  wire                           stall,
+    input  wire                           inst_w_en,
+    input  wire [INST_WIDTH-1:0]          inst_w_in,
+    input  wire [$clog2(PC_TYPE_NUM)-1:0] pc_sel, // Selector for PC: 0 = Plus4, 1 = Branch, 2 = Jump, 3 = Jump Register
+    input  wire [ADDR_WIDTH-1:0]          bra_addr,
+    input  wire [ADDR_WIDTH-1:0]          jal_addr,
+    input  wire [ADDR_WIDTH-1:0]          jar_addr,
+    output wire [ADDR_WIDTH-1:0]          pc,
+    output wire [ADDR_WIDTH-1:0]          pc4,
+    output wire [INST_WIDTH-1:0]          inst_word,
+    output wire                           inst_valid,
+    output wire                           inst_buffer_empty,
+    output wire                           inst_buffer_full
 );
-    // ALU implementation with important operations
-    reg [DATA_WIDTH-1:0] ealu;
-    always @(*) begin
-        case (ealuc)
-            5'b00000: ealu = ea + eb;                        // ADD
-            5'b00001: ealu = ea - eb;                        // SUB
-            5'b00010: ealu = ea & eb;                        // AND
-            5'b00011: ealu = ea | eb;                        // OR
-            5'b00100: ealu = ea ^ eb;                        // XOR
-            5'b00101: ealu = ~(ea | eb);                     // NOR
-            5'b00110: ealu = ~(ea & eb);                     // NAND
-            5'b00111: ealu = ea << eb[4:0];                  // Logical shift left
-            5'b01000: ealu = ea >> eb[4:0];                  // Logical shift right
-            5'b01001: ealu = $signed(ea) >>> eb[4:0];        // Arithmetic shift right
-            5'b01010: ealu = ($signed(ea) < $signed(eb)) ? 1 : 0; // Set less than (signed)
-            5'b01011: ealu = (ea < eb) ? 1 : 0;              // Set less than (unsigned)
-            5'b01100: ealu = ea;                             // Pass-through A
-            5'b01101: ealu = eb;                             // Pass-through B
-            5'b01110: ealu = ~ea;                            // Bitwise NOT A
-            5'b01111: ealu = (ea == eb) ? 1 : 0;             // Equality test
-            5'b10000: ealu = (ea != eb) ? 1 : 0;             // Inequality test
-            5'b10001: ealu = ea + 1;                         // Increment A
-            5'b10010: ealu = ea - 1;                         // Decrement A
-            default:  ealu = {DATA_WIDTH{1'b0}};
-        endcase
-    end
 
-    // 2-to-1 mux for ecall
-    assign eal = ecall ? epc4 : ealu;
+    wire [ADDR_WIDTH-1:0] pc_next;
+    wire [ADDR_WIDTH-1:0] pc_curr;
+    wire [ADDR_WIDTH-1:0] pc_next_options [0:PC_TYPE_NUM-1];
 
-endmodule
+    assign pc_next_options[0] = pc_curr + 4;
+    assign pc_next_options[1] = bra_addr;
+    assign pc_next_options[2] = jal_addr;
+    assign pc_next_options[3] = jar_addr;
 
-module stage_id_stall #(parameter ADDR_WIDTH = 64, REG_NUM = 32) (
-    input  wire                       is_load,
-    input  wire                       has_rs1,
-    input  wire                       has_rs2,
-    input  wire                       has_rs3,    
-    input  wire [$clog2(REG_NUM)-1:0] rs1_addr,
-    input  wire [$clog2(REG_NUM)-1:0] rs2_addr,
-    input  wire [$clog2(REG_NUM)-1:0] rs3_addr,
-    input  wire [$clog2(REG_NUM)-1:0] load_rd,
-    output wire                       stall 
-);
-    assign stall = is_load &&   ((has_rs1 && (rs1_addr == load_rd)) 
-                              || (has_rs2 && (rs2_addr == load_rd)) 
-                              || (has_rs3 && (rs3_addr == load_rd)));
+    // M1: Compute next PC based on pc_sel and curr_pc
+    mux_n M1 (.data_in(pc_next_options), 
+              .sel(pc_sel),
+              .data_out(pc_next)
+             );
+
+    // M2: Register slice to store PC
+    // PC returns as output for M1 to take as input
+    reg_if M2 (.clk(clk),
+               .reset(reset),
+               .stall(stall),
+               .pc_next(pc_next),
+               .pc_reg(pc_curr)
+              );
+
+    // M3: Conditional instruction fetch from instruction memory
+    // pc_curr bits split between X and Y arbitrarily, first two bits ignored due to address incrementing by 4
+    memory_instruction instruction_memory (.Clock(clk),
+                           .WriteEnable(inst_w_en),
+                           .X_addr(pc_curr[5:2]),
+                           .Y_addr(pc_curr[9:6]),
+                           .Data_in(inst_w_in),
+                           .Data_out(inst_word)
+                          );
+
+    assign inst_valid = (pc_sel == 2'b00);
+    assign pc = pc_curr;
+    assign pc4 = pc_next_options[0];
 endmodule
 
 module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, REG_NUM = 32) (
-    input  wire                           clk,
+		input  wire                           clk,
     input  wire                           reset,
     input  wire                           interrupt,
     input  wire                           stall,
@@ -209,61 +210,60 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, REG_NUM = 32) (
     assign read_out_a = a_out;
 endmodule
 
-module stage_if  #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, PC_TYPE_NUM = 4)(
-    input  wire                           clk,
-    input  wire                           reset,
-    input  wire                           stall,
-    input  wire                           inst_w_en,
-    input  wire [INST_WIDTH-1:0]          inst_w_in,
-    input  wire [$clog2(PC_TYPE_NUM)-1:0] pc_sel, // Selector for PC: 0 = Plus4, 1 = Branch, 2 = Jump, 3 = Jump Register
-    input  wire [ADDR_WIDTH-1:0]          bra_addr,
-    input  wire [ADDR_WIDTH-1:0]          jal_addr,
-    input  wire [ADDR_WIDTH-1:0]          jar_addr,
-    output wire [ADDR_WIDTH-1:0]          pc,
-    output wire [ADDR_WIDTH-1:0]          pc4,
-    output wire [INST_WIDTH-1:0]          inst_word,
-    output wire                           inst_valid,
-    output wire                           inst_buffer_empty,
-    output wire                           inst_buffer_full
+module stage_id_stall #(parameter ADDR_WIDTH = 64, REG_NUM = 32) (
+    input  wire                       is_load,
+    input  wire                       has_rs1,
+    input  wire                       has_rs2,
+    input  wire                       has_rs3,    
+    input  wire [$clog2(REG_NUM)-1:0] rs1_addr,
+    input  wire [$clog2(REG_NUM)-1:0] rs2_addr,
+    input  wire [$clog2(REG_NUM)-1:0] rs3_addr,
+    input  wire [$clog2(REG_NUM)-1:0] load_rd,
+    output wire                       stall 
 );
+    assign stall = is_load &&   ((has_rs1 && (rs1_addr == load_rd)) 
+                              || (has_rs2 && (rs2_addr == load_rd)) 
+                              || (has_rs3 && (rs3_addr == load_rd)));
+endmodule
 
-    wire [ADDR_WIDTH-1:0] pc_next;
-    wire [ADDR_WIDTH-1:0] pc_curr;
-    wire [ADDR_WIDTH-1:0] pc_next_options [0:PC_TYPE_NUM-1];
+module pl_stage_exe #(parameter DATA_WIDTH = 64)(
+    input  wire [DATA_WIDTH-1:0] ea,
+    input  wire [DATA_WIDTH-1:0] eb,
+    input  wire [DATA_WIDTH-1:0] epc4,
+    input  wire [4:0]            ealuc,
+    input  wire                  ecall,
+    output wire [DATA_WIDTH-1:0] eal
+);
+    // ALU implementation with important operations
+    reg [DATA_WIDTH-1:0] ealu;
+    always @(*) begin
+        case (ealuc)
+            5'b00000: ealu = ea + eb;                        // ADD
+            5'b00001: ealu = ea - eb;                        // SUB
+            5'b00010: ealu = ea & eb;                        // AND
+            5'b00011: ealu = ea | eb;                        // OR
+            5'b00100: ealu = ea ^ eb;                        // XOR
+            5'b00101: ealu = ~(ea | eb);                     // NOR
+            5'b00110: ealu = ~(ea & eb);                     // NAND
+            5'b00111: ealu = ea << eb[4:0];                  // Logical shift left
+            5'b01000: ealu = ea >> eb[4:0];                  // Logical shift right
+            5'b01001: ealu = $signed(ea) >>> eb[4:0];        // Arithmetic shift right
+            5'b01010: ealu = ($signed(ea) < $signed(eb)) ? 1 : 0; // Set less than (signed)
+            5'b01011: ealu = (ea < eb) ? 1 : 0;              // Set less than (unsigned)
+            5'b01100: ealu = ea;                             // Pass-through A
+            5'b01101: ealu = eb;                             // Pass-through B
+            5'b01110: ealu = ~ea;                            // Bitwise NOT A
+            5'b01111: ealu = (ea == eb) ? 1 : 0;             // Equality test
+            5'b10000: ealu = (ea != eb) ? 1 : 0;             // Inequality test
+            5'b10001: ealu = ea + 1;                         // Increment A
+            5'b10010: ealu = ea - 1;                         // Decrement A
+            default:  ealu = {DATA_WIDTH{1'b0}};
+        endcase
+    end
 
-    assign pc_next_options[0] = pc_curr + 4;
-    assign pc_next_options[1] = bra_addr;
-    assign pc_next_options[2] = jal_addr;
-    assign pc_next_options[3] = jar_addr;
+    // 2-to-1 mux for ecall
+    assign eal = ecall ? epc4 : ealu;
 
-    // M1: Compute next PC based on pc_sel and curr_pc
-    mux_n M1 (.data_in(pc_next_options), 
-              .sel(pc_sel),
-              .data_out(pc_next)
-             );
-
-    // M2: Register slice to store PC
-    // PC returns as output for M1 to take as input
-    reg_if M2 (.clk(clk),
-               .reset(reset),
-               .stall(stall),
-               .pc_next(pc_next),
-               .pc_reg(pc_curr)
-              );
-
-    // M3: Conditional instruction fetch from instruction memory
-    // pc_curr bits split between X and Y arbitrarily, first two bits ignored due to address incrementing by 4
-    memory_instruction instruction_memory (.Clock(clk),
-                           .WriteEnable(inst_w_en),
-                           .X_addr(pc_curr[5:2]),
-                           .Y_addr(pc_curr[9:6]),
-                           .Data_in(inst_w_in),
-                           .Data_out(inst_word)
-                          );
-
-    assign inst_valid = (pc_sel == 2'b00);
-    assign pc = pc_curr;
-    assign pc4 = pc_next_options[0];
 endmodule
 
 module mm_stage #(
