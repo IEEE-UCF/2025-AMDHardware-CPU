@@ -1,12 +1,3 @@
-module xdecode #(parameter SIZE = 8)(
-    input  wire [SIZE-1:0] addr,
-    output reg  [(1<<SIZE)-1:0] loc
-);
-    always @(*) begin
-        loc = 0;
-        loc[addr] = 1'b1;
-    end
-endmodule
 module datamem #(parameter ADDR_BITS = 16, DATA_WIDTH = 64)(
     input  wire                      Clock,
     input  wire                      WriteEnable,
@@ -19,7 +10,6 @@ module datamem #(parameter ADDR_BITS = 16, DATA_WIDTH = 64)(
     localparam NUM_COLS = (1 << ADDR_BITS/2);
     reg [DATA_WIDTH-1:0] memory_array [0:NUM_ROWS-1][0:NUM_COLS-1];
     integer i, j;
-    wire [NUM_ROWS-1:0] Xloca, Yloca;
     initial begin
         for (i = 0; i < NUM_ROWS; i = i + 1) begin
             for (j = 0; j < NUM_COLS; j = j + 1) begin
