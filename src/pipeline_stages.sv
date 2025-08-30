@@ -1,4 +1,4 @@
-module pl_stage_exe #(parameter DATA_WIDTH = 64)(
+module stage_ex #(parameter DATA_WIDTH = 64)(
     input  wire [DATA_WIDTH-1:0] ea,
     input  wire [DATA_WIDTH-1:0] eb,
     input  wire [DATA_WIDTH-1:0] epc4,
@@ -82,6 +82,11 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, REG_NUM = 32) (
     input  wire [$clog2(REG_NUM)-1:0]     ex_pro_rs,
     input  wire [$clog2(REG_NUM)-1:0]     mm_pro_rs,
     input  wire [$clog2(REG_NUM)-1:0]     mm_mem_rs,
+    input  wire                           ex_wr_reg_en,
+    input  wire                           mm_wr_reg_en,
+    input  wire                           mm_is_load,
+    input  wire [$clog2(REG_NUM)-1:0]     ex_rd,
+    input  wire [$clog2(REG_NUM)-1:0]     mm_rd,
     output wire                           is_equal,
     output wire [ADDR_WIDTH-1:0]          read_out_gpu,
     output wire [ADDR_WIDTH-1:0]          read_out_a,
@@ -174,25 +179,29 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, REG_NUM = 32) (
                                       .data_out_gpu(read_out_gpu)
                                      );
     
-    bypass_mux a_bypass (.file_out(a_file_out),
+    bypass_mux a_bypass (.ex_wr_reg_en(ex_wr_reg_en),
+                             .mm_wr_reg_en(mm_wr_reg_en),
+                             .mm_is_load(mm_is_load),
+                             .file_out(a_file_out),
                              .ex_pro(ex_pro),
                              .mm_pro(mm_pro),
                              .mm_mem(mm_mem),
                              .file_out_rs(d_inst[19:15]),
-                             .ex_pro_rs(ex_pro_rs),
-                             .mm_pro_rs(mm_pro_rs),
-                             .mm_mem_rs(mm_mem_rs),
+                             .ex_rd(ex_rd),
+                             .mm_rd(mm_rd),
                              .bypass_out(a_out)
                              );
     
-    bypass_mux b_bypass (.file_out(b_file_out),
+    bypass_mux b_bypass (.ex_wr_reg_en(ex_wr_reg_en),
+                             .mm_wr_reg_en(mm_wr_reg_en), 
+                             .mm_is_load(mm_is_load),
+                             .file_out(b_file_out),
                              .ex_pro(ex_pro),
                              .mm_pro(mm_pro),
                              .mm_mem(mm_mem),
                              .file_out_rs(d_inst[24:20]),
-                             .ex_pro_rs(ex_pro_rs),
-                             .mm_pro_rs(mm_pro_rs),
-                             .mm_mem_rs(mm_mem_rs),
+                             .ex_rd(ex_rd),
+                             .mm_rd(mm_rd),
                              .bypass_out(b_out_options[0])
                              );
 
@@ -286,7 +295,6 @@ module mm_stage #(
     output reg [DATA_WIDTH-1:0] mem_write_data,
     output reg mem_read,
     output reg mem_write,
-    input wire [DATA_WIDTH-1:0] mem_read_data,
 
     // Outputs to MEM/WB pipeline register
     output reg [DATA_WIDTH-1:0] mem_wb_mem_data,
@@ -295,8 +303,23 @@ module mm_stage #(
     output reg mem_wb_reg_write
 );
 
+// Internal wire for data memory output
+wire [DATA_WIDTH-1:0] mem_read_data;
+// Instantiate data memory
+datamem #(
+    .ADDR_BITS(16),
+    .DATA_WIDTH(DATA_WIDTH)
+) data_memory (
+    .Clock(clk),
+    .WriteEnable(ex_mem_mem_write),  // Use input signal directly
+    .X_addr(ex_mem_alu_result[15:8]), // Use upper 8 bits for X address
+    .Y_addr(ex_mem_alu_result[7:0]),  // Use lower 8 bits for Y address  
+    .Data_in(ex_mem_write_data),     // Use input signal directly
+    .Data_out(mem_read_data)
+);
+
 always @(posedge clk or negedge rst_n) begin
-    if (rst_n) begin
+    if (!rst_n) begin
         mem_addr         <= 0;
         mem_write_data   <= 0;
         mem_read         <= 0;
@@ -327,7 +350,7 @@ end
 
 endmodule
 
-module pl_stage_wb #(parameter DATA_WIDTH = 64)(
+module stage_wb #(parameter DATA_WIDTH = 64)(
     input  wire [DATA_WIDTH-1:0] walu,
     input  wire [DATA_WIDTH-1:0] wmem,
     input  wire                  wmem2reg,

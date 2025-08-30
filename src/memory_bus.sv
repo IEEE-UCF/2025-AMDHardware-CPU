@@ -33,7 +33,7 @@ module memory_bus #(
     output logic                   mem_req_we,
     output logic [DATA_WIDTH-1:0]  mem_req_wdata,
     output logic [DATA_WIDTH/8-1:0] mem_req_be,
-    output logic [2:0]             mem_req_burst_len,
+    output logic [$clog2(BURST_SIZE)-1:0] mem_req_burst_len,
     
     input  logic                   mem_resp_valid,
     output logic                   mem_resp_ready,

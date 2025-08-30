@@ -9,11 +9,10 @@ module bypass_mux  #(parameter ADDR_WIDTH = 64, REG_NUM = 32)(
     input  wire [$clog2(REG_NUM)-1:0] file_out_rs,
     input  wire [$clog2(REG_NUM)-1:0] ex_rd,
     input  wire [$clog2(REG_NUM)-1:0] mm_rd,
-    output wire [ADDR_WIDTH-1:0] bypass_out
+    output logic [ADDR_WIDTH-1:0] bypass_out
 );
 
-    wire [1:0] bypass_sel;
-    wire [ADDR_WIDTH-1:0] bypass_options [0:3];
+    logic [1:0] bypass_sel;
     
     always_comb begin
         if (file_out_rs == ex_rd & ex_wr_reg_en) begin
@@ -31,11 +30,15 @@ module bypass_mux  #(parameter ADDR_WIDTH = 64, REG_NUM = 32)(
         end
     end
 
-    assign bypass_options = {file_out, ex_pro, mm_pro, mm_mem};
+    // Simple mux without array concatenation for Icarus compatibility
+    always_comb begin
+        case (bypass_sel)
+            2'b00: bypass_out = file_out;
+            2'b01: bypass_out = ex_pro;
+            2'b10: bypass_out = mm_pro;
+            2'b11: bypass_out = mm_mem;
+            default: bypass_out = file_out;
+        endcase
+    end
 
-    mux_n bypass_selection (
-        .data_in(bypass_options),
-        .sel(bypass_sel),
-        .data_out(bypass_out)
-    );
 endmodule

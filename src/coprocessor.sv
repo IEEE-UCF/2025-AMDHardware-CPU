@@ -666,7 +666,7 @@ module coprocessor_cp2 #(
             // Handle TLB operations
             if (tlb_flush_all) begin
                 for (int i = 0; i < TLB_ENTRIES; i++) begin
-                    tlb_entries[i].valid <= 1'b0;
+                    tlb_valid[i] <= 1'b0;
                 end
             end else if (tlb_flush_entry) begin
                 // Flush specific entry based on rs1 (VPN) and rs2 (ASID)
@@ -800,17 +800,13 @@ module coprocessor_cp3 #(
     logic [DATA_WIDTH-1:0] perf_branch_count;
     logic [DATA_WIDTH-1:0] perf_cache_miss_count;
     
-    // Trace buffer
-    typedef struct packed {
-        logic [ADDR_WIDTH-1:0]  pc;
-        logic [INST_WIDTH-1:0]  instruction;
-        logic [ADDR_WIDTH-1:0]  mem_addr;
-        logic [DATA_WIDTH-1:0]  mem_data;
-        logic                   mem_write;
-        logic [63:0]            timestamp;
-    } trace_entry_t;
-    
-    trace_entry_t trace_buffer [TRACE_BUFFER_SIZE-1:0];
+    // Trace buffer - using separate arrays instead of struct array for Icarus compatibility
+    logic [ADDR_WIDTH-1:0]  trace_pc [TRACE_BUFFER_SIZE-1:0];
+    logic [INST_WIDTH-1:0]  trace_instruction [TRACE_BUFFER_SIZE-1:0];
+    logic [ADDR_WIDTH-1:0]  trace_mem_addr [TRACE_BUFFER_SIZE-1:0];
+    logic [DATA_WIDTH-1:0]  trace_mem_data [TRACE_BUFFER_SIZE-1:0];
+    logic                   trace_mem_write [TRACE_BUFFER_SIZE-1:0];
+    logic [63:0]            trace_timestamp_buf [TRACE_BUFFER_SIZE-1:0];
     logic [$clog2(TRACE_BUFFER_SIZE)-1:0] trace_write_ptr;
     logic [$clog2(TRACE_BUFFER_SIZE)-1:0] trace_read_ptr;
     logic trace_enable;
@@ -934,12 +930,12 @@ module coprocessor_cp3 #(
             trace_timestamp <= trace_timestamp + 1;
             
             if (trace_enable && debug_inst_valid) begin
-                trace_buffer[trace_write_ptr].pc <= debug_pc;
-                trace_buffer[trace_write_ptr].instruction <= debug_instruction;
-                trace_buffer[trace_write_ptr].mem_addr <= debug_mem_addr;
-                trace_buffer[trace_write_ptr].mem_data <= debug_mem_data;
-                trace_buffer[trace_write_ptr].mem_write <= debug_mem_write;
-                trace_buffer[trace_write_ptr].timestamp <= trace_timestamp;
+                trace_pc[trace_write_ptr] <= debug_pc;
+                trace_instruction[trace_write_ptr] <= debug_instruction;
+                trace_mem_addr[trace_write_ptr] <= debug_mem_addr;
+                trace_mem_data[trace_write_ptr] <= debug_mem_data;
+                trace_mem_write[trace_write_ptr] <= debug_mem_write;
+                trace_timestamp_buf[trace_write_ptr] <= trace_timestamp;
                 
                 if (trace_write_ptr == TRACE_BUFFER_SIZE - 1) begin
                     trace_write_ptr <= '0;
@@ -990,7 +986,7 @@ module coprocessor_cp3 #(
                     end
                     DBG_TRACE_DATA: begin
                         if (trace_read_ptr != trace_write_ptr) begin
-                            reg_read_data = trace_buffer[trace_read_ptr].pc;
+                            reg_read_data = trace_pc[trace_read_ptr];
                         end
                     end
                     default: begin
@@ -2908,47 +2904,183 @@ module coprocessor_system #(
     input  logic [DATA_WIDTH-1:0]  fp_reg_rdata2
 );
 
-    // For now, implement basic pass-through behavior
-    // Real implementation would instantiate CP0, CP1, CP2, CP3 modules
+    // Individual coprocessor signals
+    logic [DATA_WIDTH-1:0] cp0_data_out, cp1_data_out, cp2_data_out, cp3_data_out;
+    logic cp0_ready, cp1_ready, cp2_ready, cp3_ready;
+    logic cp0_exception, cp1_exception, cp2_exception, cp3_exception;
+    logic cp0_enable, cp1_enable, cp2_enable, cp3_enable;
     
-    // Default values to make the compilation work
-    assign cp_data_out = cp_data_in;  // Just pass through data for now
-    assign cp_ready = cp_valid;       // Always ready when valid
-    assign cp_exception = 1'b0;       // No exceptions
+    // System control signals from coprocessors
+    logic cp0_trap_enable, cp2_debug_halt;
+    logic [DATA_WIDTH-1:0] cp0_trap_vector;
+    logic [ADDR_WIDTH-1:0] cp2_physical_addr;
+    logic cp2_translation_valid, cp2_page_fault;
+    logic cp3_cache_flush, cp3_cache_invalidate;
     
-    // System control defaults
-    assign trap_enable = 1'b0;
-    assign trap_vector = '0;
-    assign physical_addr = virtual_addr;  // No translation for now
-    assign translation_valid = 1'b1;      // Translation always valid
-    assign page_fault = 1'b0;             // No page faults
-    assign debug_halt_request = 1'b0;
-    assign cache_flush = 1'b0;
-    assign cache_invalidate = 1'b0;
+    // Coprocessor selection logic
+    always_comb begin
+        cp0_enable = 1'b0;
+        cp1_enable = 1'b0;
+        cp2_enable = 1'b0;
+        cp3_enable = 1'b0;
+        
+        if (cp_valid) begin
+            case (cp_select)
+                2'b00: cp0_enable = 1'b1;  // System Control & Status (CP0)
+                2'b01: cp1_enable = 1'b1;  // Floating Point Unit (CP1)
+                2'b10: cp2_enable = 1'b1;  // Memory Management (CP2)
+                2'b11: cp3_enable = 1'b1;  // Debug & Performance (CP3)
+            endcase
+        end
+    end
     
-    // Floating point defaults
-    assign fp_reg_write = 1'b0;
-    assign fp_reg_waddr = '0;
-    assign fp_reg_wdata = '0;
-    assign fp_reg_raddr1 = '0;
-    assign fp_reg_raddr2 = '0;
-
-    // Full implementation would select among different coprocessors
+    // Output multiplexing based on coprocessor selection
     always_comb begin
         case (cp_select)
             2'b00: begin
-                // CP0 operations
+                cp_data_out = cp0_data_out;
+                cp_ready = cp0_ready;
+                cp_exception = cp0_exception;
             end
             2'b01: begin
-                // CP1 operations
+                cp_data_out = cp1_data_out;
+                cp_ready = cp1_ready;
+                cp_exception = cp1_exception;
             end
             2'b10: begin
-                // CP2 operations
+                cp_data_out = cp2_data_out;
+                cp_ready = cp2_ready;
+                cp_exception = cp2_exception;
             end
             2'b11: begin
-                // CP3 operations
+                cp_data_out = cp3_data_out;
+                cp_ready = cp3_ready;
+                cp_exception = cp3_exception;
+            end
+            default: begin
+                cp_data_out = '0;
+                cp_ready = 1'b0;
+                cp_exception = 1'b0;
             end
         endcase
     end
+    
+    // System control output assignments
+    assign trap_enable = cp0_trap_enable;
+    assign trap_vector = cp0_trap_vector;
+    assign physical_addr = cp2_physical_addr;
+    assign translation_valid = cp2_translation_valid;
+    assign page_fault = cp2_page_fault;
+    assign debug_halt_request = cp2_debug_halt;
+    assign cache_flush = cp3_cache_flush;
+    assign cache_invalidate = cp3_cache_invalidate;
+    
+    // CP0 - System Control and Status Register coprocessor
+    coprocessor_cp0 #(
+        .DATA_WIDTH(DATA_WIDTH),
+        .ADDR_WIDTH(ADDR_WIDTH),
+        .INST_WIDTH(INST_WIDTH)
+    ) cp0_inst (
+        .clk(clk),
+        .rst_n(rst_n),
+        .cp_enable(cp0_enable),
+        .cp_instruction(cp_instruction),
+        .cp_data_in(cp_data_in),
+        .cp_data_out(cp0_data_out),
+        .cp_ready(cp0_ready),
+        .cp_exception(cp0_exception),
+        .interrupt_pending(interrupt_pending),
+        .pc_current(pc_current),
+        .trap_enable(cp0_trap_enable),
+        .trap_vector(cp0_trap_vector),
+        .privilege_mode(),  // Not connected for now
+        .debug_mode(),      // Not connected for now
+        .debug_pc()         // Not connected for now
+    );
+    
+    // CP1 - Floating Point Unit coprocessor
+    coprocessor_cp1 #(
+        .DATA_WIDTH(DATA_WIDTH),
+        .ADDR_WIDTH(ADDR_WIDTH),
+        .INST_WIDTH(INST_WIDTH)
+    ) cp1_inst (
+        .clk(clk),
+        .rst_n(rst_n),
+        .cp_enable(cp1_enable),
+        .cp_instruction(cp_instruction),
+        .cp_data_in(cp_data_in),
+        .cp_data_out(cp1_data_out),
+        .cp_ready(cp1_ready),
+        .cp_exception(cp1_exception),
+        .fp_reg_write(fp_reg_write),
+        .fp_reg_waddr(fp_reg_waddr),
+        .fp_reg_wdata(fp_reg_wdata),
+        .fp_reg_raddr1(fp_reg_raddr1),
+        .fp_reg_raddr2(fp_reg_raddr2),
+        .fp_reg_rdata1(fp_reg_rdata1),
+        .fp_reg_rdata2(fp_reg_rdata2),
+        .fp_invalid(),      // Not connected for now
+        .fp_divide_by_zero(), // Not connected for now
+        .fp_overflow(),     // Not connected for now
+        .fp_underflow(),    // Not connected for now
+        .fp_inexact()       // Not connected for now
+    );
+    
+    // CP2 - Memory Management Unit coprocessor
+    coprocessor_cp2 #(
+        .DATA_WIDTH(DATA_WIDTH),
+        .ADDR_WIDTH(ADDR_WIDTH),
+        .INST_WIDTH(INST_WIDTH)
+    ) cp2_inst (
+        .clk(clk),
+        .rst_n(rst_n),
+        .cp_enable(cp2_enable),
+        .cp_instruction(cp_instruction),
+        .cp_data_in(cp_data_in),
+        .cp_data_out(cp2_data_out),
+        .cp_ready(cp2_ready),
+        .cp_exception(cp2_exception),
+        .virtual_addr(virtual_addr),
+        .physical_addr(cp2_physical_addr),
+        .translation_valid(cp2_translation_valid),
+        .page_fault(cp2_page_fault),
+        .cache_flush(cp3_cache_flush),      // CP2 actually handles cache control
+        .cache_invalidate(cp3_cache_invalidate), // CP2 actually handles cache control
+        .cache_addr(),      // Not connected for now
+        .page_table_base(page_table_base),
+        .vm_enable(vm_enable),
+        .tlb_miss(),        // Not connected for now
+        .protection_fault() // Not connected for now
+    );
+    
+    // CP3 - Debug and Performance coprocessor
+    coprocessor_cp3 #(
+        .DATA_WIDTH(DATA_WIDTH),
+        .ADDR_WIDTH(ADDR_WIDTH),
+        .INST_WIDTH(INST_WIDTH)
+    ) cp3_inst (
+        .clk(clk),
+        .rst_n(rst_n),
+        .cp_enable(cp3_enable),
+        .cp_instruction(cp_instruction),
+        .cp_data_in(cp_data_in),
+        .cp_data_out(cp3_data_out),
+        .cp_ready(cp3_ready),
+        .cp_exception(cp3_exception),
+        .debug_pc(pc_current),
+        .debug_instruction(current_instruction),
+        .debug_mem_addr(mem_addr),
+        .debug_mem_data(mem_data),
+        .debug_mem_write(mem_write),
+        .debug_inst_valid(inst_valid),
+        .debug_halt_request(cp2_debug_halt),
+        .debug_single_step(), // Not connected for now
+        .debug_breakpoint_hit(), // Not connected for now
+        .debug_watchpoint_hit(), // Not connected for now
+        .external_debug_req(external_debug_req),
+        .external_halt_req(1'b0), // Not connected for now
+        .debug_status(),    // Not connected for now
+        .debug_halt_pc()    // Not connected for now
+    );
 
 endmodule

@@ -27,6 +27,14 @@ module cpu_top #(
 );
 
     // Internal pipeline signals
+    // IF stage signals
+    logic [ADDR_WIDTH-1:0]   pc_current;
+    logic [ADDR_WIDTH-1:0]   pc_plus4;
+    logic [INST_WIDTH-1:0]   inst_fetched;
+    logic                    inst_valid;
+    logic                    if_stall;
+    
+    // ID stage signals  
     logic [INST_WIDTH-1:0]   inst_id_ex;
     logic                    inst_valid_id_ex;
     logic [DATA_WIDTH-1:0]   read_data_a_id_ex;
@@ -35,6 +43,31 @@ module cpu_top #(
     logic [ADDR_WIDTH-1:0]   pc_if_id;
     logic [DATA_WIDTH-1:0]   id_reg_data1;
     logic [DATA_WIDTH-1:0]   id_reg_data2;
+    logic                    is_equal;
+    logic [ADDR_WIDTH-1:0]   bra_addr;
+    logic [ADDR_WIDTH-1:0]   jal_addr;
+    logic [ADDR_WIDTH-1:0]   jar_addr;
+    
+    // EX stage signals
+    logic [DATA_WIDTH-1:0]   alu_result;
+    logic [4:0]              alu_ctrl;
+    logic                    ecall_signal;
+    
+    // MEM stage signals
+    logic [DATA_WIDTH-1:0]   mem_read_data_out;
+    logic [4:0]              mem_rd_addr;
+    logic                    mem_reg_write;
+    
+    // WB stage signals
+    logic [DATA_WIDTH-1:0]   wb_data;
+    logic                    wb_mem2reg;
+    
+    // Control signals
+    logic [1:0]              pc_sel;
+    logic                    reg_write;
+    logic                    mem_read;
+    logic                    mem_write;
+    logic                    mem_to_reg;
     
     // Pipeline control signals
     logic                    global_stall;
@@ -179,31 +212,152 @@ module cpu_top #(
         .data_out_b(fp_reg_rdata2)
     );
     
+    // ===== PIPELINE STAGES =====
+    
+    // IF Stage - Instruction Fetch
+    stage_if #(
+        .ADDR_WIDTH(ADDR_WIDTH),
+        .INST_WIDTH(INST_WIDTH),
+        .PC_TYPE_NUM(PC_TYPE_NUM)
+    ) if_stage (
+        .clk(clk),
+        .reset(~rst_n),
+        .stall(global_stall),
+        .inst_w_en(1'b0),           // No instruction memory writes for now
+        .inst_w_in(32'h0),
+        .pc_sel(pc_sel),
+        .bra_addr(bra_addr),
+        .jal_addr(jal_addr),
+        .jar_addr(jar_addr),
+        .pc(pc_current),
+        .pc4(pc_plus4),
+        .inst_word(inst_fetched),
+        .inst_valid(inst_valid),
+        .inst_buffer_empty(/* unused */),
+        .inst_buffer_full(/* unused */)
+    );
+    
+    // ID Stage - Instruction Decode
+    stage_id #(
+        .ADDR_WIDTH(ADDR_WIDTH),
+        .INST_WIDTH(INST_WIDTH),
+        .REG_NUM(REG_NUM)
+    ) id_stage (
+        .clk(clk),
+        .reset(~rst_n),
+        .interrupt(interrupt),
+        .stall(global_stall),
+        .w_en(reg_write),
+        .w_en_gpu(cp_reg_write),
+        .has_imm(1'b0),             // Control signal from control unit
+        .has_rs1(1'b1),
+        .has_rs2(1'b1),
+        .has_rs3(1'b0),
+        .imm_type(2'b00),
+        .pc4(pc_plus4),
+        .pc(pc_current),
+        .w_result(wb_data),
+        .w_result_gpu(cp_reg_data),
+        .ex_pro(alu_result),        // Forwarding from EX stage
+        .mm_pro(mem_read_data_out), // Forwarding from MEM stage
+        .mm_mem(mem_read_data_out),
+        .inst_word(inst_fetched),
+        .load_rd(5'b0),             // From hazard detection
+        .is_load(mem_read),
+        .w_rd(mem_rd_addr),
+        .w_rd_gpu(cp_reg_addr),
+        .rs_gpu(5'b0),
+        .ex_pro_rs(5'b0),           // Register addresses for forwarding
+        .mm_pro_rs(5'b0),
+        .mm_mem_rs(5'b0),
+        .ex_wr_reg_en(reg_write),   // Bypass control signals
+        .mm_wr_reg_en(mem_reg_write),
+        .mm_is_load(mem_read),
+        .ex_rd(inst_id_ex[11:7]),   // Destination register addresses
+        .mm_rd(mem_rd_addr),
+        .is_equal(is_equal),
+        .read_out_gpu(/* unused */),
+        .read_out_a(read_data_a_id_ex),
+        .read_out_b(read_data_b_id_ex),
+        .bra_addr(bra_addr),
+        .jal_addr(jal_addr),
+        .jar_addr(jar_addr)
+    );
+    
+    // EX Stage - Execute (ALU)
+    stage_ex #(
+        .DATA_WIDTH(DATA_WIDTH)
+    ) ex_stage (
+        .ea(read_data_a_id_ex),
+        .eb(read_data_b_id_ex),
+        .epc4(pc_plus4),
+        .ealuc(alu_ctrl),
+        .ecall(ecall_signal),
+        .eal(alu_result)
+    );
+    
+    // MEM Stage - Memory Access
+    mm_stage #(
+        .DATA_WIDTH(DATA_WIDTH),
+        .ADDR_WIDTH(ADDR_WIDTH)
+    ) mem_stage (
+        .clk(clk),
+        .rst_n(rst_n),
+        .ex_mem_alu_result(alu_result),
+        .ex_mem_write_data(read_data_b_id_ex),
+        .ex_mem_rd(inst_fetched[11:7]),     // rd field from instruction
+        .ex_mem_mem_read(mem_read),
+        .ex_mem_mem_write(mem_write),
+        .ex_mem_reg_write(reg_write),
+        .mem_addr(dmem_addr),
+        .mem_write_data(dmem_write_data),
+        .mem_read(dmem_read),
+        .mem_write(dmem_write),
+        .mem_wb_mem_data(mem_read_data_out),
+        .mem_wb_alu_result(/* unused - use alu_result directly */),
+        .mem_wb_rd(mem_rd_addr),
+        .mem_wb_reg_write(mem_reg_write)
+    );
+    
+    // WB Stage - Write Back
+    stage_wb #(
+        .DATA_WIDTH(DATA_WIDTH)
+    ) wb_stage (
+        .walu(alu_result),
+        .wmem(mem_read_data_out),
+        .wmem2reg(mem_to_reg),
+        .wdata(wb_data)
+    );
+    
+    // ===== CONTROL UNIT (PLACEHOLDER) =====
+    // TODO: Add proper control unit to generate control signals
+    assign alu_ctrl = 5'b00000;        // ADD operation by default
+    assign ecall_signal = 1'b0;
+    assign pc_sel = 2'b00;             // PC+4 by default
+    assign reg_write = 1'b1;           // Enable register writes
+    assign mem_read = 1'b0;            // No memory reads by default  
+    assign mem_write = 1'b0;           // No memory writes by default
+    assign mem_to_reg = 1'b0;          // Use ALU result by default
+    
     // Pipeline control with coprocessor stalls
     assign global_stall = id_stall_out | data_hazard_stall | cp_stall_request;
+    assign if_stall = global_stall;
+    
+    // Connect instruction memory interface
+    assign imem_addr = pc_current;
+    assign imem_read = 1'b1;
+    
+    // Pipeline register updates
+    assign inst_id_ex = inst_fetched;
+    assign inst_valid_id_ex = inst_valid;
+    assign pc_id_ex = pc_current;
+    assign pc_if_id = pc_current;
     
     // Connect coprocessor output
     assign cp_data_out = cp_sys_data_out;
     
-    // Temporary assignments for missing pipeline signals
-    // These should be connected to actual pipeline stage outputs
-    assign inst_id_ex = 32'h0;
-    assign inst_valid_id_ex = 1'b0;
-    assign read_data_a_id_ex = 64'h0;
-    assign read_data_b_id_ex = 64'h0;
-    assign pc_id_ex = 64'h0;
-    assign pc_if_id = 64'h0;
-    assign id_reg_data1 = 64'h0;
-    assign id_reg_data2 = 64'h0;
+    // Remaining pipeline control signals (TODO: connect to proper control unit)
     assign id_stall_out = 1'b0;
     assign data_hazard_stall = 1'b0;
-    
-    // Basic memory interface assignments
-    assign imem_addr = 64'h0;
-    assign imem_read = 1'b1;
-    assign dmem_addr = 64'h0;
-    assign dmem_write_data = 64'h0;
-    assign dmem_read = 1'b0;
-    assign dmem_write = 1'b0;
 
 endmodule

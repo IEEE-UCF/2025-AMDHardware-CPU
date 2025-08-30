@@ -275,8 +275,8 @@ module control_unit #(
     // If instruction isn't U-Type, J-Type, MSCMEM, or SYSTEM with IMM, there has to be an RS1
     wire has_rs1 = (imm_type != IMM_U_OR_J_TYPE) || !is_mscmem_or_system_imm;
     // If imm_type is S, either we have S-Type instruction or other RV32/64I instruction that always has RS2
-    // When opcode is FOTHER, inst[30] always shows when RS2 isn't used
-    wire has_rs2 = (imm_type == IMM_S_TYPE) || !is_mscmem_or_system_imm || (opcode != OP_FL) || !(opcode == OP_FOTHER && inst[30]); 
+    // When opcode is FOTHER, instruction[30] always shows when RS2 isn't used
+    wire has_rs2 = (imm_type == IMM_S_TYPE) || !is_mscmem_or_system_imm || (opcode != OP_FL) || !(opcode == OP_FOTHER && instruction[30]); 
     // All instructions with RS3 have the last three bits of the opcode set to 100
     wire has_rs3 = (opcode[6:4] == 3'b100);
 
