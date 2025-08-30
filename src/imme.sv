@@ -9,7 +9,7 @@ module imme #(parameter DATA_WIDTH = 64, INST_WIDTH = 32, IMM_TYPE_NUM = 4)(
     localparam IMM_I_TYPE = 2'b10;  // S-type immediate
     localparam IMM_U_OR_J_TYPE = 2'b11;  // U-type immediate
     
-    always @(*) begin
+    always_comb begin
         case(imm_type)
             IMM_S_TYPE: imm = {{DATA_WIDTH-11{inst[31]}},inst[30:25],inst[11:7]}; // Store
             IMM_SHIFT: imm = {{DATA_WIDTH-6{1'b0}}, inst[25:20]}; // I-Type Shift
