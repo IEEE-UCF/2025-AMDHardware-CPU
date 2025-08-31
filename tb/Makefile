@@ -47,9 +47,7 @@ TOPLEVEL_LANG = verilog
 ifeq ($(SIM), icarus)
 	COMPILE_ARGS += -g2012 -Wno-timescale
 endif
-ifeq ($(SIM), verilator)
-	COMPILE_ARGS += lint_off WIDTHTRUNC
-endif
+
 include $(shell cocotb-config --makefiles)/Makefile.sim
 
 # Make 'all_tests_live' the default target when no target is specified
