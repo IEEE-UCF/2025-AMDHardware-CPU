@@ -14,6 +14,7 @@ VERILOG_SOURCES += ../src/cpu_top.sv
 VERILOG_SOURCES += ../src/dispatcher.sv
 VERILOG_SOURCES += ../src/memory_system.sv
 VERILOG_SOURCES += ../src/mmu.sv
+VERILOG_SOURCES += ../src/red_pitaya_cpu_wrapper.sv
 
 # Skip problematic modules that need advanced SystemVerilog features
 # These would need Verilator or Synopsys VCS to simulate properly:
@@ -33,7 +34,7 @@ include $(shell cocotb-config --makefiles)/Makefile.sim
 .DEFAULT_GOAL := all_tests
 
 # Define working testbenches
-TESTBENCHES =  mux_n:mux_n_tb branch_calc:branch_calc_tb bypass_mux:bypass_mux_tb control_unit:control_unit_tb equ:equ_tb imme:imme_tb instruction_buffer:instruction_buffer_tb _interconnect:interconnect_tb coprocessor_system:coprocessor_system_tb coprocessor_system:coprocessor_system_tb cpu_top:cpu_top_tb dispatcher:dispatcher_tb memory_system:memory_system_tb mmu:mmu_tb
+TESTBENCHES =  mux_n:mux_n_tb branch_calc:branch_calc_tb bypass_mux:bypass_mux_tb control_unit:control_unit_tb equ:equ_tb imme:imme_tb instruction_buffer:instruction_buffer_tb _interconnect:interconnect_tb coprocessor_system:coprocessor_system_tb coprocessor_system:coprocessor_system_tb cpu_top:cpu_top_tb dispatcher:dispatcher_tb memory_system:memory_system_tb mmu:mmu_tb red_pitaya_cpu_wrapper:red_pitaya_cpu_wrapper_tb
 
 .PHONY: all_tests
 basic_tests:
@@ -124,3 +125,7 @@ memory_system:
 .PHONY: mmub
 mmu:
 	$(MAKE) sim TOPLEVEL=mmu MODULE=mmu_tb SIM_BUILD=sim_mmu
+
+.PHONY: red_pitaya_cpu_wrapper
+red_pitaya_cpu_wrapper:
+	$(MAKE) sim TOPLEVEL=red_pitaya_cpu_wrapper MODULE=red_pitaya_cpu_wrapper_tb SIM_BUILD=sim_red_pitaya_cpu_wrapper
