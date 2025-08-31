@@ -8,7 +8,7 @@ from typing import Optional, List, Dict, Tuple
 import struct
 
 """
-RISC-V RV64I ISA Coprocessor System Testbench
+RISC-V RV32I ISA Coprocessor System Testbench
 
 Based purely on RISC-V ISA specification for coprocessor instructions:
 - System instructions (CSR operations, ECALL, EBREAK)
@@ -277,9 +277,9 @@ class RISCVCoprocessorSpec:
 
 @cocotb.test()
 async def test_risc_v_coprocessor_system_compliance(dut):
-    """Test coprocessor system compliance with RISC-V RV64I ISA"""
+    """Test coprocessor system compliance with RISC-V RV32I ISA"""
 
-    dut._log.info("=== Testing RISC-V RV64I Coprocessor System ===")
+    dut._log.info("=== Testing RISC-V RV32I Coprocessor System ===")
 
     # Start clock
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
@@ -565,7 +565,7 @@ async def test_risc_v_coprocessor_system_compliance(dut):
     dut._log.info(f"Success rate: {(passed_tests / total_tests * 100):.1f}%")
 
     if failed_tests == 0:
-        dut._log.info("✓ Coprocessor system is RISC-V RV64I ISA compliant!")
+        dut._log.info("✓ Coprocessor system is RISC-V RV32I ISA compliant!")
     else:
         dut._log.error("✗ Coprocessor system has ISA compliance issues")
         assert False, (
@@ -682,9 +682,9 @@ async def test_risc_v_coprocessor_edge_cases(dut):
     dut._log.info("Testing maximum register values")
 
     max_values = [
-        0xFFFFFFFFFFFFFFFF,  # Maximum 64-bit value
-        0x8000000000000000,  # Most negative 64-bit value
-        0x7FFFFFFFFFFFFFFF,  # Most positive 64-bit value
+        0xFFFFFFFFFFFFFFFF,  # Maximum 32-bit value
+        0x8000000000000000,  # Most negative 32-bit value
+        0x7FFFFFFFFFFFFFFF,  # Most positive 32bit value
         0x0000000000000000,  # Zero
     ]
 
