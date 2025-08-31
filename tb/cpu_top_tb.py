@@ -114,7 +114,7 @@ class MemoryModel:
 async def reset_dut(dut):
     """Reset the DUT"""
     dut.rst_n.value = 0
-    dut.interrupt.value = 0
+    dut.interr.value = 0
     await ClockCycles(dut.clk, 5)
     dut.rst_n.value = 1
     await ClockCycles(dut.clk, 5)
@@ -601,9 +601,9 @@ async def test_interrupt_handling(dut):
         # Assert interrupt at cycle 20
         if cycle == 20:
             dut._log.info("Asserting interrupt...")
-            dut.interrupt.value = 1
+            dut.interr.value = 1
         elif cycle == 25:
-            dut.interrupt.value = 0
+            dut.interr.value = 0
 
         await RisingEdge(dut.clk)
 
@@ -611,7 +611,7 @@ async def test_interrupt_handling(dut):
             pc = int(dut.debug_pc.value)
             state = int(dut.debug_state.value)
             dut._log.info(
-                f"Cycle {cycle}: PC=0x{pc:08x}, State={state}, INT={int(dut.interrupt.value)}"
+                f"Cycle {cycle}: PC=0x{pc:08x}, State={state}, INT={int(dut.interr.value)}"
             )
 
     dut._log.info("Interrupt handling test completed!")

@@ -6,7 +6,7 @@ module cpu_top #(
 ) (
     input logic clk,
     input logic rst_n,
-    input logic _interrupt,
+    input logic interr, // Interrupt
 
     // Instruction Memory Interface
     output logic [ADDR_WIDTH-1:0] imem_addr,
