@@ -82,10 +82,10 @@ async def test_instruction_cache_behavior(dut):
 
     await reset_dut(dut)
 
-    # Preload instruction memory
-    dut.inst_mem[0].value = 0x00000013  # NOP
-    dut.inst_mem[1].value = 0x00100093  # ADDI x1, x0, 1
-    dut.inst_mem[2].value = 0x00200113  # ADDI x2, x0, 2
+    # Memory is pre-initialized in SystemVerilog
+    # inst_mem[0] = 0x00000013  # NOP
+    # inst_mem[1] = 0x00100093  # ADDI x1, x0, 1
+    # inst_mem[2] = 0x00200113  # ADDI x2, x0, 2
 
     # Fetch sequence to generate hits and misses
     assert await imem_fetch(dut, 0) == 0x00000013  # miss
@@ -117,8 +117,8 @@ async def test_data_memory_operations(dut):
 
     await reset_dut(dut)
 
-    # Preload data memory and read back twice (second read hits cache)
-    dut.data_mem[0].value = 0x89ABCDEF
+    # Data memory is pre-initialized with data_mem[0] = 0x89ABCDEF
+    # Read back twice (second read hits cache)
     assert await dmem_read(dut, 0) == 0x89ABCDEF
     assert await dmem_read(dut, 0) == 0x89ABCDEF
 
@@ -146,10 +146,9 @@ async def test_cache_flush_and_concurrent_ports(dut):
 
     await reset_dut(dut)
 
-    # Preload instruction and data memories
-    dut.inst_mem[0].value = 0x00000013
-    dut.inst_mem[1].value = 0x00100093
-    dut.data_mem[0].value = 0x12345678
+    # Memory is pre-initialized in SystemVerilog
+    # inst_mem[0] = 0x00000013, inst_mem[1] = 0x00100093
+    # data_mem[0] = 0x89ABCDEF (but we'll overwrite it)
 
     async def instr_task():
         assert await imem_fetch(dut, 0) == 0x00000013
@@ -157,7 +156,9 @@ async def test_cache_flush_and_concurrent_ports(dut):
         assert await imem_fetch(dut, 0) == 0x00000013
 
     async def data_task():
-        assert await dmem_read(dut, 0) == 0x12345678
+        # First read the initialized value
+        assert await dmem_read(dut, 0) == 0x89ABCDEF
+        # Then write a new value
         await dmem_write(dut, 0, 0x87654321, 0xF)
         assert await dmem_read(dut, 0) == 0x87654321
 

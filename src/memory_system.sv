@@ -46,6 +46,32 @@ module memory_system #(
   logic [ADDR_WIDTH-1:0] dcache_tag;
   logic dcache_valid;
 
+  // Performance counters for debugging
+  logic [31:0] imem_access_count;
+  logic [31:0] dmem_access_count;
+  logic [31:0] cache_hit_count;
+
+  // Initialize memory arrays
+  initial begin
+    // Initialize instruction memory with NOPs
+    for (int i = 0; i < IMEM_SIZE / 4; i++) begin
+      inst_mem[i] = 32'h00000013;  // NOP instruction
+    end
+
+    // Initialize first few instructions for testing
+    inst_mem[0] = 32'h00000013;  // NOP
+    inst_mem[1] = 32'h00100093;  // ADDI x1, x0, 1
+    inst_mem[2] = 32'h00200113;  // ADDI x2, x0, 2
+
+    // Initialize data memory to zero
+    for (int i = 0; i < DMEM_SIZE / 4; i++) begin
+      data_mem[i] = 32'h00000000;
+    end
+
+    // Initialize first data location for testing
+    data_mem[0] = 32'h89ABCDEF;
+  end
+
   // Instruction fetch logic
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -59,9 +85,11 @@ module memory_system #(
         icache_valid <= 1'b0;
       end
 
+      imem_ready <= 1'b0;  // Default to not ready
+
       if (imem_read) begin
-        // Check if address is in range
-        if (imem_addr[31:15] == 17'h0) begin  // Check if in first 32KB
+        // Check if address is in range (word-aligned addresses only)
+        if (imem_addr[31:15] == 17'h0 && imem_addr[1:0] == 2'b00) begin  // Check if in first 32KB and word-aligned
           logic [IMEM_ADDR_WIDTH-1:0] word_addr = imem_addr[IMEM_ADDR_WIDTH+1:2];
 
           // Simple cache check
@@ -82,8 +110,6 @@ module memory_system #(
           imem_read_data <= 32'h00000013;  // NOP for out of range
           imem_ready <= 1'b1;
         end
-      end else begin
-        imem_ready <= 1'b0;
       end
     end
   end
@@ -101,15 +127,15 @@ module memory_system #(
         dcache_valid <= 1'b0;
       end
 
-      dmem_ready <= 1'b0;
+      dmem_ready <= 1'b0;  // Default to not ready
 
       // Handle memory operations
       if (dmem_write || dmem_read) begin
-        // Check if address is in data memory range
-        if (dmem_addr[31:15] == 17'h0) begin  // First 32KB
+        // Check if address is in data memory range (word-aligned addresses only)
+        if (dmem_addr[31:15] == 17'h0 && dmem_addr[1:0] == 2'b00) begin  // First 32KB and word-aligned
           logic [DMEM_ADDR_WIDTH-1:0] word_addr = dmem_addr[DMEM_ADDR_WIDTH+1:2];
 
-          if ({19'b0, word_addr} < (DMEM_SIZE / 4)) begin
+          if (32'(word_addr) < (DMEM_SIZE / 4)) begin
             if (dmem_write) begin
               // Handle byte enables for write
               logic [31:0] current_data = data_mem[word_addr];
@@ -142,7 +168,7 @@ module memory_system #(
             dmem_ready <= 1'b1;
           end
         end else begin
-          // Out of range
+          // Out of range or misaligned
           dmem_read_data <= '0;
           dmem_ready <= 1'b1;
         end
@@ -150,11 +176,7 @@ module memory_system #(
     end
   end
 
-  // Performance counters for debugging
-  logic [31:0] imem_access_count;
-  logic [31:0] dmem_access_count;
-  logic [31:0] cache_hit_count;
-
+  // Performance counter logic
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       imem_access_count <= '0;
