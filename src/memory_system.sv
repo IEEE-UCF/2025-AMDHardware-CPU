@@ -26,7 +26,12 @@ module memory_system #(
 
     // Cache control
     input logic cache_flush,
-    input logic cache_invalidate
+    input logic cache_invalidate,
+    
+    // Debug outputs for testbench
+    output logic [31:0] imem_access_count,
+    output logic [31:0] dmem_access_count,
+    output logic [31:0] cache_hit_count
 );
 
   // Calculate the actual address width needed for memory arrays
@@ -45,18 +50,6 @@ module memory_system #(
   logic [DATA_WIDTH-1:0] dcache_data;
   logic [ADDR_WIDTH-1:0] dcache_tag;
   logic dcache_valid;
-
-  // Performance counters for debugging
-  logic [31:0] imem_access_count;
-  logic [31:0] dmem_access_count;
-  logic [31:0] cache_hit_count;
-
-  // Initialize counters to zero
-  initial begin
-    imem_access_count = '0;
-    dmem_access_count = '0;
-    cache_hit_count   = '0;
-  end
 
   // Initialize memory arrays
   initial begin
@@ -95,9 +88,9 @@ module memory_system #(
         icache_valid <= 1'b0;
       end
 
-      // Handle read request
-      if (imem_read) begin
-        // Increment access counter for any read attempt
+      // Handle read request (only count new requests)
+      if (imem_read && !imem_ready) begin
+        // Increment access counter on a new read request
         imem_access_count <= imem_access_count + 1;
 
         // Check if address is in range (word-aligned addresses only)
@@ -108,7 +101,6 @@ module memory_system #(
           if (icache_valid && icache_tag == imem_addr && !cache_invalidate && !cache_flush) begin
             // Cache hit
             imem_read_data <= icache_data;
-            imem_ready <= 1'b1;
             cache_hit_count <= cache_hit_count + 1;
           end else if (32'(word_addr) < (IMEM_SIZE / 4)) begin
             // Cache miss - read from memory
@@ -116,20 +108,18 @@ module memory_system #(
             icache_data <= inst_mem[word_addr];
             icache_tag <= imem_addr;
             icache_valid <= 1'b1;
-            imem_ready <= 1'b1;
             // Don't increment cache_hit_count for misses
           end else begin
             // Out of range
             imem_read_data <= 32'h00000013;  // NOP for out of range
-            imem_ready <= 1'b1;
           end
         end else begin
           // Out of range or misaligned
           imem_read_data <= 32'h00000013;  // NOP for out of range
-          imem_ready <= 1'b1;
         end
+        imem_ready <= 1'b1;
       end else begin
-        // No read request - clear ready
+        // No new request - clear ready
         imem_ready <= 1'b0;
       end
     end
@@ -150,9 +140,9 @@ module memory_system #(
         dcache_valid <= 1'b0;
       end
 
-      // Handle memory operations
-      if (dmem_write || dmem_read) begin
-        // Increment access counter for any memory operation
+      // Handle memory operations (only count new requests)
+      if ((dmem_write || dmem_read) && !dmem_ready) begin
+        // Increment access counter on a new request
         dmem_access_count <= dmem_access_count + 1;
 
         // Check if address is in data memory range (word-aligned addresses only)
@@ -172,22 +162,21 @@ module memory_system #(
 
               data_mem[word_addr] <= new_data;
               dcache_valid <= 1'b0;  // Invalidate cache on write
-              dmem_ready <= 1'b1;
-            end else if (dmem_read) begin
+              dmem_read_data <= '0;
+            end else begin // dmem_read
               // Check cache
               if (dcache_valid && dcache_tag == dmem_addr && !cache_invalidate && !cache_flush) begin
                 // Cache hit (but we don't count data cache hits in the shared counter)
                 dmem_read_data <= dcache_data;
-                dmem_ready <= 1'b1;
               end else begin
                 // Cache miss - read from memory
                 dmem_read_data <= data_mem[word_addr];
                 dcache_data <= data_mem[word_addr];
                 dcache_tag <= dmem_addr;
                 dcache_valid <= 1'b1;
-                dmem_ready <= 1'b1;
               end
             end
+            dmem_ready <= 1'b1;
           end else begin
             // Out of range access
             dmem_read_data <= '0;
