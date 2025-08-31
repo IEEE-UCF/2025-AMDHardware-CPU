@@ -119,4 +119,4 @@ module memory_system #(
                 end
                 default: begin
                     burst_count <= '0;
-                    burst_addr <= dmem_addr
+                    burst_addr <= dmem_addr;
