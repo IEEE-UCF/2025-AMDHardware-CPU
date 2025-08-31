@@ -683,9 +683,9 @@ async def test_uml_architectural_compliance(dut):
 
     # Apply x0 register test to DUT - your SystemVerilog expects reg file to provide 0
     dut.file_out.value = 0  # Register file should provide 0 for x0
-    dut.ex_pro.value = 0xEEEEEEEEEEEEEEEE
-    dut.mm_pro.value = 0xDDDDDDDDDDDDDDDD
-    dut.mm_mem.value = 0xCCCCCCCCCCCCCCCC
+    dut.ex_pro.value = 0xEEEEEEEE
+    dut.mm_pro.value = 0xDDDDDDDD
+    dut.mm_mem.value = 0xCCCCCCCC
     dut.file_out_rs.value = 0  # Read from x0
     dut.ex_rd.value = 1  # EX writes to different register
     dut.mm_rd.value = 2  # MEM writes to different register
