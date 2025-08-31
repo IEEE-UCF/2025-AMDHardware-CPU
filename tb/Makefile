@@ -1,4 +1,4 @@
-SIM ?= icarus
+SIM ?= verilator
 
 # Basic utility modules that work with Icarus
 VERILOG_SOURCES += ../rtl_utils/mux_n.sv
@@ -27,6 +27,10 @@ ifeq ($(TOPLEVEL),memory_system)
 VERILOG_SOURCES += ../src/memory_system.sv
 endif
 
+ifeq ($(TOPLEVEL),mmu)
+VERILOG_SOURCES += ../src/mmu.sv
+endif
+
 # Skip problematic modules that need advanced SystemVerilog features
 # These would need Verilator or Synopsys VCS to simulate properly:
 # - gpu_op_queue.sv (uses complex structs and break statements)
@@ -40,15 +44,19 @@ endif
 TOPLEVEL_LANG = verilog
 
 # Add warning suppression for Icarus Verilog
-COMPILE_ARGS += -g2012 -Wno-timescale
-
+ifeq ($(SIM), icarus)
+	COMPILE_ARGS += -g2012 -Wno-timescale
+endif
+ifeq ($(SIM), verilator)
+	COMPILE_ARGS += lint_off WIDTHTRUNC
+endif
 include $(shell cocotb-config --makefiles)/Makefile.sim
 
 # Make 'all_tests_live' the default target when no target is specified
 .DEFAULT_GOAL := basic_tests
 
 # Define working testbenches for Icarus Verilog
-BASIC_TESTBENCHES = branch_calc:branch_calc_tb bypass_mux:bypass_mux_tb control_unit:control_unit_tb equ:equ_tb imme:imme_tb instruction_buffer:instruction_buffer_tb
+BASIC_TESTBENCHES = branch_calc:branch_calc_tb bypass_mux:bypass_mux_tb control_unit:control_unit_tb equ:equ_tb imme:imme_tb instruction_buffer:instruction_buffer_tb mmu:mmu_tb
 
 # Advanced testbenches that require more SystemVerilog features
 ADVANCED_TESTBENCHES = coprocessor_system:coprocessor_system_tb dispatcher:dispatcher_tb memory_system:memory_system_tb
@@ -158,3 +166,7 @@ instruction_buffer:
 .PHONY: memory_system
 memory_system:
 	$(MAKE) sim TOPLEVEL=memory_system MODULE=memory_system_tb SIM_BUILD=sim_memory_system
+
+.PHONY: mmu
+mmu:
+	$(MAKE) sim TOPLEVEL=mmu MODULE=mmu_tb SIM_BUILD=sim_mmu
