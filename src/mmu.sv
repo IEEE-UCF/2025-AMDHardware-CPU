@@ -87,12 +87,13 @@ module mmu #(
     logic [$clog2(TLB_ENTRIES)-1:0] tlb_hit_idx;
     tlb_entry_t tlb_hit_entry;
     
-    always_comb begin
+    always @* begin
         tlb_hit = 1'b0;
         tlb_hit_idx = '0;
         tlb_hit_entry = '0;
         
-        for (int i = 0; i < TLB_ENTRIES; i++) begin
+        integer i;
+        for (i = 0; i < TLB_ENTRIES; i = i + 1) begin
             if (tlb[i].valid) begin
                 logic vpn_match;
                 
@@ -116,7 +117,7 @@ module mmu #(
     
     logic perm_valid;
     
-    always_comb begin
+    always @* begin
         perm_valid = 1'b0;
         
         if (tlb_hit) begin
@@ -140,23 +141,21 @@ module mmu #(
         end
     end
 
-    typedef enum logic [2:0] {
-        IDLE,
-        PTW_L2,     // Level 2 (1GB pages)
-        PTW_L1,     // Level 1 (2MB pages)
-        PTW_L0,     // Level 0 (4KB pages)
-        PTW_WAIT,
-        UPDATE_TLB,
-        FAULT
-    } ptw_state_t;
-    
-    ptw_state_t ptw_state, ptw_next_state;
+    localparam IDLE       = 3'd0;
+    localparam PTW_L2     = 3'd1; // Level 2 (1GB pages)
+    localparam PTW_L1     = 3'd2; // Level 1 (2MB pages)
+    localparam PTW_L0     = 3'd3; // Level 0 (4KB pages)
+    localparam PTW_WAIT   = 3'd4;
+    localparam UPDATE_TLB = 3'd5;
+    localparam FAULT      = 3'd6;
+
+    logic [2:0] ptw_state, ptw_next_state;
     pte_t pte;
     logic [1:0] ptw_level;
     logic [PADDR_WIDTH-1:0] ptw_base;
     
     // State machine
-    always_ff @(posedge clk or negedge rst_n) begin
+    always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             ptw_state <= IDLE;
             ptw_level <= '0;
@@ -215,7 +214,7 @@ module mmu #(
     end
     
     // Next state logic
-    always_comb begin
+    always @* begin
         ptw_next_state = ptw_state;
         ptw_req = 1'b0;
         
@@ -226,7 +225,17 @@ module mmu #(
                 end
             end
             
-            PTW_L2, PTW_L1, PTW_L0: begin
+            PTW_L2: begin
+                ptw_req = 1'b1;
+                ptw_next_state = PTW_WAIT;
+            end
+
+            PTW_L1: begin
+                ptw_req = 1'b1;
+                ptw_next_state = PTW_WAIT;
+            end
+
+            PTW_L0: begin
                 ptw_req = 1'b1;
                 ptw_next_state = PTW_WAIT;
             end
@@ -261,9 +270,10 @@ module mmu #(
         endcase
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            for (int i = 0; i < TLB_ENTRIES; i++) begin
+            integer i;
+            for (i = 0; i < TLB_ENTRIES; i = i + 1) begin
                 tlb[i].valid <= 1'b0;
             end
             tlb_replace_idx <= '0;
@@ -271,14 +281,16 @@ module mmu #(
             if (tlb_flush) begin
                 if (tlb_flush_vaddr) begin
                     // Flush specific address
-                    for (int i = 0; i < TLB_ENTRIES; i++) begin
+                    integer i;
+                    for (i = 0; i < TLB_ENTRIES; i = i + 1) begin
                         if (tlb[i].valid && tlb[i].vpn == tlb_flush_addr[38:12]) begin
                             tlb[i].valid <= 1'b0;
                         end
                     end
                 end else begin
                     // Flush entire TLB
-                    for (int i = 0; i < TLB_ENTRIES; i++) begin
+                    integer i;
+                    for (i = 0; i < TLB_ENTRIES; i = i + 1) begin
                         tlb[i].valid <= 1'b0;
                     end
                 end
@@ -286,7 +298,7 @@ module mmu #(
         end
     end
     
-    always_comb begin
+    always @* begin
         if (!vm_enable) begin
             // Virtual memory disabled - direct mapping
             paddr = vaddr;
