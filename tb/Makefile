@@ -42,6 +42,10 @@ VERILOG_SOURCES += ../src/cpu_top.sv
 VERILOG_SOURCES += ../src/cpu_axi_wrapper.sv
 VERILOG_SOURCES += ../src/red_pitaya_cpu_wrapper.sv
 
+# RTL Utils
+VERILOG_SOURCES += ../rtl_utils/rv32a_atomic.sv
+VERILOG_SOURCES += ../rtl_utils/rv32m_muldiv.sv
+
 TOPLEVEL_LANG = verilog
 
 include $(shell cocotb-config --makefiles)/Makefile.sim
