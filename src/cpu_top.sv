@@ -6,7 +6,7 @@ module cpu_top #(
 ) (
     input logic clk,
     input logic rst_n,
-    input logic interrupt,
+    input logic _interrupt,
 
     // Instruction Memory Interface
     output logic [ADDR_WIDTH-1:0] imem_addr,
@@ -177,17 +177,17 @@ module cpu_top #(
       .MUL_LAT(2),
       .DIV_LAT(32)
   ) u_muldiv (
-      .clk        (clk),
-      .rst_n      (rst_n),
-      .valid_i    (is_m_op && id_valid && !pipeline_stall),
-      .funct3_i   (funct3),
-      .rs1_data_i (id_rs1_data),
-      .rs2_data_i (id_rs2_data),
-      .ready_o    (m_ready),
-      .valid_o    (m_result_valid),
-      .result_o   (m_result),
-      .flush_i    (pipeline_flush),
-      .stall_i    (pipeline_stall)
+      .clk       (clk),
+      .rst_n     (rst_n),
+      .valid_i   (is_m_op && id_valid && !pipeline_stall),
+      .funct3_i  (funct3),
+      .rs1_data_i(id_rs1_data),
+      .rs2_data_i(id_rs2_data),
+      .ready_o   (m_ready),
+      .valid_o   (m_result_valid),
+      .result_o  (m_result),
+      .flush_i   (pipeline_flush),
+      .stall_i   (pipeline_stall)
   );
 
   assign m_stall = is_m_op && !m_ready;
@@ -199,30 +199,30 @@ module cpu_top #(
       .ADDR_WIDTH(ADDR_WIDTH),
       .DATA_WIDTH(DATA_WIDTH)
   ) u_atomic (
-      .clk          (clk),
-      .rst_n        (rst_n),
-      .valid_i      (is_a_op && id_valid && !pipeline_stall),
-      .funct5_i     (id_inst[31:27]),
-      .aq_i         (id_inst[26]),
-      .rl_i         (id_inst[25]),
-      .addr_i       (id_rs1_data),
-      .rs1_data_i   (id_rs1_data),
-      .rs2_data_i   (id_rs2_data),
-      .ready_o      (a_ready),
-      .valid_o      (a_result_valid),
-      .result_o     (a_result),
-      .mem_req_o    (a_mem_req),
-      .mem_addr_o   (a_mem_addr),
-      .mem_wdata_o  (a_mem_wdata),
-      .mem_we_o     (a_mem_we),
-      .mem_lock_o   (a_mem_lock),
-      .mem_rdata_i  (dmem_read_data),
-      .mem_ready_i  (dmem_ready),
-      .flush_i      (pipeline_flush),
-      .exception_i  (1'b0), // Connect to exception logic if available
-      .stall_req_o  (a_stall_req),
+      .clk(clk),
+      .rst_n(rst_n),
+      .valid_i(is_a_op && id_valid && !pipeline_stall),
+      .funct5_i(id_inst[31:27]),
+      .aq_i(id_inst[26]),
+      .rl_i(id_inst[25]),
+      .addr_i(id_rs1_data),
+      .rs1_data_i(id_rs1_data),
+      .rs2_data_i(id_rs2_data),
+      .ready_o(a_ready),
+      .valid_o(a_result_valid),
+      .result_o(a_result),
+      .mem_req_o(a_mem_req),
+      .mem_addr_o(a_mem_addr),
+      .mem_wdata_o(a_mem_wdata),
+      .mem_we_o(a_mem_we),
+      .mem_lock_o(a_mem_lock),
+      .mem_rdata_i(dmem_read_data),
+      .mem_ready_i(dmem_ready),
+      .flush_i(pipeline_flush),
+      .exception_i(1'b0),  // Connect to exception logic if available
+      .stall_req_o(a_stall_req),
       .snoop_valid_i(1'b0),
-      .snoop_addr_i (32'h0)
+      .snoop_addr_i(32'h0)
   );
 
   // ========================================
@@ -352,7 +352,8 @@ module cpu_top #(
         5'b00000: alu_result = alu_input_a + alu_input_b;  // ADD
         5'b00001: alu_result = alu_input_a - alu_input_b;  // SUB
         5'b00010: alu_result = alu_input_a << alu_input_b[4:0];  // SLL
-        5'b00011: alu_result = ($signed(alu_input_a) < $signed(alu_input_b)) ? 32'h1 : 32'h0;  // SLT
+        5'b00011:
+        alu_result = ($signed(alu_input_a) < $signed(alu_input_b)) ? 32'h1 : 32'h0;  // SLT
         5'b00100: alu_result = (alu_input_a < alu_input_b) ? 32'h1 : 32'h0;  // SLTU
         5'b00101: alu_result = alu_input_a ^ alu_input_b;  // XOR
         5'b00110: alu_result = alu_input_a >> alu_input_b[4:0];  // SRL
@@ -361,7 +362,7 @@ module cpu_top #(
         5'b01001: alu_result = alu_input_a & alu_input_b;  // AND
         5'b01010: alu_result = immediate;  // LUI
         5'b01011: alu_result = id_pc + immediate;  // AUIPC
-        default:  alu_result = 32'h0;
+        default: alu_result = 32'h0;
       endcase
     end
 
@@ -455,12 +456,12 @@ module cpu_top #(
       ex_mem_write <= mem_write && id_valid && !is_a_op;
       ex_mem_data <= id_rs2_data;
       ex_valid <= id_valid;
-      
+
       // Track M operations
       ex_is_m_op <= is_m_op && id_valid;
       ex_m_rd <= is_m_op ? id_rd : 5'h0;
       ex_m_valid <= is_m_op && id_valid;
-      
+
       // Track A operations
       ex_is_a_op <= is_a_op && id_valid;
       ex_a_rd <= is_a_op ? id_rd : 5'h0;
@@ -478,7 +479,7 @@ module cpu_top #(
       mem_valid <= 1'b0;
     end else if (!pipeline_stall) begin
       mem_pc <= ex_pc;
-      
+
       // Select result based on operation type
       if (ex_is_m_op && m_result_valid) begin
         mem_result <= m_result;
@@ -497,7 +498,7 @@ module cpu_top #(
         mem_rd <= ex_rd;
         mem_reg_write <= ex_reg_write;
       end
-      
+
       mem_valid <= ex_valid;
     end
   end
@@ -561,15 +562,18 @@ module cpu_top #(
 
   // ========================================
   // Hazard Detection (Modified for M/A)
-  // ========================================
+  // =======================================
+  logic load_use_hazard_comb;
+  logic data_hazard_comb;
+
   always_comb begin
-    load_use_hazard = 1'b0;
-    data_hazard = 1'b0;
+    load_use_hazard_comb = 1'b0;
+    data_hazard_comb = 1'b0;
 
     // Load-use hazard
     if (ex_mem_read && ex_valid && id_valid) begin
       if ((ex_rd == rs1 && rs1 != 0) || (ex_rd == rs2 && rs2 != 0)) begin
-        load_use_hazard = 1'b1;
+        load_use_hazard_comb = 1'b1;
       end
     end
 
@@ -578,31 +582,41 @@ module cpu_top #(
       // Check regular operations
       if (mem_reg_write && mem_valid) begin
         if ((mem_rd == rs1 && rs1 != 0) || (mem_rd == rs2 && rs2 != 0)) begin
-          data_hazard = 1'b1;
+          data_hazard_comb = 1'b1;
         end
       end
-      
-      // Check M operation in progress
-      if (ex_is_m_op && !m_result_valid) begin
+
+      // Check M extension operations in flight
+      if (ex_is_m_op && ex_m_valid) begin
         if ((ex_m_rd == rs1 && rs1 != 0) || (ex_m_rd == rs2 && rs2 != 0)) begin
-          data_hazard = 1'b1;
+          data_hazard_comb = 1'b1;
         end
       end
-      
-      // Check A operation in progress
-      if (ex_is_a_op && !a_result_valid) begin
+
+      // Check A extension operations in flight
+      if (ex_is_a_op && ex_a_valid) begin
         if ((ex_a_rd == rs1 && rs1 != 0) || (ex_a_rd == rs2 && rs2 != 0)) begin
-          data_hazard = 1'b1;
+          data_hazard_comb = 1'b1;
         end
       end
     end
-
-    pipeline_stall = load_use_hazard || data_hazard || 
-                     m_stall || a_stall_req ||
-                     cp_stall_external || !imem_ready || 
-                     (ex_mem_read && !dmem_ready) || 
-                     (ex_mem_write && !dmem_ready);
   end
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      load_use_hazard <= 1'b0;
+      data_hazard <= 1'b0;
+    end else begin
+      load_use_hazard <= load_use_hazard_comb;
+      data_hazard <= data_hazard_comb;
+    end
+  end
+
+  assign pipeline_stall = load_use_hazard || data_hazard ||
+                         cp_stall_external || !imem_ready ||
+                         (ex_mem_read && !dmem_ready) ||
+                         (ex_mem_write && !dmem_ready) ||
+                         m_stall || a_stall_req;
 
   // ========================================
   // State Machine
