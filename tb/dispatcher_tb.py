@@ -1,11 +1,9 @@
 import cocotb
-import random
-from cocotb.triggers import Timer, RisingEdge
+from cocotb.triggers import Timer, RisingEdge, ClockCycles
 from cocotb.clock import Clock
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Dict, Optional, Tuple
-import struct
+from typing import Tuple
 
 """
 RISC-V RV32I ISA Dispatcher Testbench
