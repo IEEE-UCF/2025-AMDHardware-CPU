@@ -206,11 +206,13 @@ module gpu_result_buffer #(
             end
         end
         
-        // Find next ready entry
+        // Find next ready entry without using break (not supported by Icarus)
+        logic found_next;
+        found_next = 1'b0;
         for (int i = 0; i < BUFFER_DEPTH; i++) begin
-            if (ready_mask[(rd_ptr + i) % BUFFER_DEPTH]) begin
+            if (!found_next && ready_mask[(rd_ptr + i) % BUFFER_DEPTH]) begin
                 next_ready_idx = (rd_ptr + i) % BUFFER_DEPTH;
-                break;
+                found_next = 1'b1;
             end
         end
     end
