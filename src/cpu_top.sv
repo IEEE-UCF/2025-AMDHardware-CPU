@@ -97,6 +97,41 @@ module cpu_top #(
   logic [           4:0] rs1;
   logic [           4:0] rs2;
 
+  // ========================================
+  // M Extension Signals
+  // ========================================
+  logic                  is_m_op;
+  logic                  m_valid;
+  logic                  m_ready;
+  logic                  m_result_valid;
+  logic [DATA_WIDTH-1:0] m_result;
+  logic                  m_stall;
+  logic                  ex_is_m_op;
+  logic [           4:0] ex_m_rd;
+  logic                  ex_m_valid;
+
+  // ========================================
+  // A Extension Signals
+  // ========================================
+  logic                  is_a_op;
+  logic                  a_valid;
+  logic                  a_ready;
+  logic                  a_result_valid;
+  logic [DATA_WIDTH-1:0] a_result;
+  logic                  a_mem_req;
+  logic [ADDR_WIDTH-1:0] a_mem_addr;
+  logic [DATA_WIDTH-1:0] a_mem_wdata;
+  logic                  a_mem_we;
+  logic                  a_mem_lock;
+  logic                  a_stall_req;
+  logic                  ex_is_a_op;
+  logic [           4:0] ex_a_rd;
+  logic                  ex_a_valid;
+
+  // Decode M and A instructions
+  assign is_m_op = (opcode == 7'b0110011) && (funct7 == 7'b0000001);
+  assign is_a_op = (opcode == 7'b0101111) && (funct3 == 3'b010);
+
   // Register file signals
   logic [DATA_WIDTH-1:0] reg_rs1_data;
   logic [DATA_WIDTH-1:0] reg_rs2_data;
@@ -118,6 +153,10 @@ module cpu_top #(
   logic                  load_use_hazard;
   logic                  data_hazard;
 
+  // Pipeline flush signal for atomics
+  logic                  pipeline_flush;
+  assign pipeline_flush = branch_taken || jump || jalr;
+
   // State machine for simple pipeline control
   typedef enum logic [3:0] {
     IDLE   = 4'b0000,
@@ -130,6 +169,61 @@ module cpu_top #(
   } cpu_state_t;
 
   cpu_state_t current_state, next_state;
+
+  // ========================================
+  // M Extension Unit (Multiply/Divide)
+  // ========================================
+  rv32m_muldiv #(
+      .MUL_LAT(2),
+      .DIV_LAT(32)
+  ) u_muldiv (
+      .clk        (clk),
+      .rst_n      (rst_n),
+      .valid_i    (is_m_op && id_valid && !pipeline_stall),
+      .funct3_i   (funct3),
+      .rs1_data_i (id_rs1_data),
+      .rs2_data_i (id_rs2_data),
+      .ready_o    (m_ready),
+      .valid_o    (m_result_valid),
+      .result_o   (m_result),
+      .flush_i    (pipeline_flush),
+      .stall_i    (pipeline_stall)
+  );
+
+  assign m_stall = is_m_op && !m_ready;
+
+  // ========================================
+  // A Extension Unit (Atomics)
+  // ========================================
+  rv32a_atomic #(
+      .ADDR_WIDTH(ADDR_WIDTH),
+      .DATA_WIDTH(DATA_WIDTH)
+  ) u_atomic (
+      .clk          (clk),
+      .rst_n        (rst_n),
+      .valid_i      (is_a_op && id_valid && !pipeline_stall),
+      .funct5_i     (id_inst[31:27]),
+      .aq_i         (id_inst[26]),
+      .rl_i         (id_inst[25]),
+      .addr_i       (id_rs1_data),
+      .rs1_data_i   (id_rs1_data),
+      .rs2_data_i   (id_rs2_data),
+      .ready_o      (a_ready),
+      .valid_o      (a_result_valid),
+      .result_o     (a_result),
+      .mem_req_o    (a_mem_req),
+      .mem_addr_o   (a_mem_addr),
+      .mem_wdata_o  (a_mem_wdata),
+      .mem_we_o     (a_mem_we),
+      .mem_lock_o   (a_mem_lock),
+      .mem_rdata_i  (dmem_read_data),
+      .mem_ready_i  (dmem_ready),
+      .flush_i      (pipeline_flush),
+      .exception_i  (1'b0), // Connect to exception logic if available
+      .stall_req_o  (a_stall_req),
+      .snoop_valid_i(1'b0),
+      .snoop_addr_i (32'h0)
+  );
 
   // ========================================
   // Instruction Fetch Stage
@@ -159,7 +253,7 @@ module cpu_top #(
   assign if_inst   = imem_read_data;
 
   // ========================================
-  // Control Unit
+  // Control Unit (Modified for M/A)
   // ========================================
   control_unit #(
       .INST_WIDTH(INST_WIDTH)
@@ -241,7 +335,7 @@ module cpu_top #(
   );
 
   // ========================================
-  // ALU
+  // ALU (Modified to skip M/A ops)
   // ========================================
   always_comb begin
     logic [DATA_WIDTH-1:0] alu_input_a;
@@ -250,21 +344,26 @@ module cpu_top #(
     alu_input_a = ex_valid ? id_rs1_data : 32'h0;
     alu_input_b = alu_src ? immediate : id_rs2_data;
 
-    case (alu_op)
-      5'b00000: alu_result = alu_input_a + alu_input_b;  // ADD
-      5'b00001: alu_result = alu_input_a - alu_input_b;  // SUB
-      5'b00010: alu_result = alu_input_a << alu_input_b[4:0];  // SLL
-      5'b00011: alu_result = ($signed(alu_input_a) < $signed(alu_input_b)) ? 32'h1 : 32'h0;  // SLT
-      5'b00100: alu_result = (alu_input_a < alu_input_b) ? 32'h1 : 32'h0;  // SLTU
-      5'b00101: alu_result = alu_input_a ^ alu_input_b;  // XOR
-      5'b00110: alu_result = alu_input_a >> alu_input_b[4:0];  // SRL
-      5'b00111: alu_result = $signed(alu_input_a) >>> alu_input_b[4:0];  // SRA
-      5'b01000: alu_result = alu_input_a | alu_input_b;  // OR
-      5'b01001: alu_result = alu_input_a & alu_input_b;  // AND
-      5'b01010: alu_result = immediate;  // LUI
-      5'b01011: alu_result = id_pc + immediate;  // AUIPC
-      default:  alu_result = 32'h0;
-    endcase
+    // Don't compute ALU result for M/A operations
+    if (is_m_op || is_a_op) begin
+      alu_result = 32'h0;
+    end else begin
+      case (alu_op)
+        5'b00000: alu_result = alu_input_a + alu_input_b;  // ADD
+        5'b00001: alu_result = alu_input_a - alu_input_b;  // SUB
+        5'b00010: alu_result = alu_input_a << alu_input_b[4:0];  // SLL
+        5'b00011: alu_result = ($signed(alu_input_a) < $signed(alu_input_b)) ? 32'h1 : 32'h0;  // SLT
+        5'b00100: alu_result = (alu_input_a < alu_input_b) ? 32'h1 : 32'h0;  // SLTU
+        5'b00101: alu_result = alu_input_a ^ alu_input_b;  // XOR
+        5'b00110: alu_result = alu_input_a >> alu_input_b[4:0];  // SRL
+        5'b00111: alu_result = $signed(alu_input_a) >>> alu_input_b[4:0];  // SRA
+        5'b01000: alu_result = alu_input_a | alu_input_b;  // OR
+        5'b01001: alu_result = alu_input_a & alu_input_b;  // AND
+        5'b01010: alu_result = immediate;  // LUI
+        5'b01011: alu_result = id_pc + immediate;  // AUIPC
+        default:  alu_result = 32'h0;
+      endcase
+    end
 
     alu_zero = (alu_result == 32'h0);
   end
@@ -304,7 +403,7 @@ module cpu_top #(
   );
 
   // ========================================
-  // Pipeline Stages
+  // Pipeline Stages (Modified for M/A)
   // ========================================
 
   // ID Stage
@@ -330,7 +429,7 @@ module cpu_top #(
     end
   end
 
-  // EX Stage
+  // EX Stage (Modified for M/A)
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       ex_pc <= 32'h0;
@@ -341,19 +440,35 @@ module cpu_top #(
       ex_mem_write <= 1'b0;
       ex_mem_data <= 32'h0;
       ex_valid <= 1'b0;
+      ex_is_m_op <= 1'b0;
+      ex_m_rd <= 5'h0;
+      ex_m_valid <= 1'b0;
+      ex_is_a_op <= 1'b0;
+      ex_a_rd <= 5'h0;
+      ex_a_valid <= 1'b0;
     end else if (!pipeline_stall) begin
       ex_pc <= id_pc;
       ex_result <= alu_result;
       ex_rd <= id_rd;
-      ex_reg_write <= reg_write && id_valid;
-      ex_mem_read <= mem_read && id_valid;
-      ex_mem_write <= mem_write && id_valid;
+      ex_reg_write <= reg_write && id_valid && !is_m_op && !is_a_op;
+      ex_mem_read <= mem_read && id_valid && !is_a_op;
+      ex_mem_write <= mem_write && id_valid && !is_a_op;
       ex_mem_data <= id_rs2_data;
       ex_valid <= id_valid;
+      
+      // Track M operations
+      ex_is_m_op <= is_m_op && id_valid;
+      ex_m_rd <= is_m_op ? id_rd : 5'h0;
+      ex_m_valid <= is_m_op && id_valid;
+      
+      // Track A operations
+      ex_is_a_op <= is_a_op && id_valid;
+      ex_a_rd <= is_a_op ? id_rd : 5'h0;
+      ex_a_valid <= is_a_op && id_valid;
     end
   end
 
-  // MEM Stage
+  // MEM Stage (Modified for M/A)
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       mem_pc <= 32'h0;
@@ -363,13 +478,26 @@ module cpu_top #(
       mem_valid <= 1'b0;
     end else if (!pipeline_stall) begin
       mem_pc <= ex_pc;
-      if (ex_mem_read && dmem_ready) begin
+      
+      // Select result based on operation type
+      if (ex_is_m_op && m_result_valid) begin
+        mem_result <= m_result;
+        mem_rd <= ex_m_rd;
+        mem_reg_write <= 1'b1;
+      end else if (ex_is_a_op && a_result_valid) begin
+        mem_result <= a_result;
+        mem_rd <= ex_a_rd;
+        mem_reg_write <= 1'b1;
+      end else if (ex_mem_read && dmem_ready) begin
         mem_result <= dmem_read_data;
+        mem_rd <= ex_rd;
+        mem_reg_write <= ex_reg_write || ex_mem_read;
       end else begin
         mem_result <= ex_result;
+        mem_rd <= ex_rd;
+        mem_reg_write <= ex_reg_write;
       end
-      mem_rd <= ex_rd;
-      mem_reg_write <= ex_reg_write;
+      
       mem_valid <= ex_valid;
     end
   end
@@ -390,13 +518,25 @@ module cpu_top #(
   end
 
   // ========================================
-  // Data Memory Interface
+  // Data Memory Interface (Modified for A)
   // ========================================
-  assign dmem_addr = ex_result;
-  assign dmem_write_data = ex_mem_data;
-  assign dmem_read = ex_mem_read && ex_valid;
-  assign dmem_write = ex_mem_write && ex_valid;
-  assign dmem_byte_enable = 4'b1111;  // Full word access for now
+  always_comb begin
+    if (a_mem_req) begin
+      // Atomic operation takes priority
+      dmem_addr = a_mem_addr;
+      dmem_write_data = a_mem_wdata;
+      dmem_read = !a_mem_we;
+      dmem_write = a_mem_we;
+      dmem_byte_enable = 4'b1111;  // Atomics are word-aligned
+    end else begin
+      // Normal memory operations
+      dmem_addr = ex_result;
+      dmem_write_data = ex_mem_data;
+      dmem_read = ex_mem_read && ex_valid;
+      dmem_write = ex_mem_write && ex_valid;
+      dmem_byte_enable = 4'b1111;  // Full word access for now
+    end
+  end
 
   // ========================================
   // Branch Logic
@@ -420,7 +560,7 @@ module cpu_top #(
   end
 
   // ========================================
-  // Hazard Detection
+  // Hazard Detection (Modified for M/A)
   // ========================================
   always_comb begin
     load_use_hazard = 1'b0;
@@ -433,17 +573,35 @@ module cpu_top #(
       end
     end
 
-    // Data hazard (simplified)
-    if (mem_reg_write && mem_valid && id_valid) begin
-      if ((mem_rd == rs1 && rs1 != 0) || (mem_rd == rs2 && rs2 != 0)) begin
-        data_hazard = 1'b1;
+    // Data hazard (including M/A operations)
+    if (id_valid) begin
+      // Check regular operations
+      if (mem_reg_write && mem_valid) begin
+        if ((mem_rd == rs1 && rs1 != 0) || (mem_rd == rs2 && rs2 != 0)) begin
+          data_hazard = 1'b1;
+        end
+      end
+      
+      // Check M operation in progress
+      if (ex_is_m_op && !m_result_valid) begin
+        if ((ex_m_rd == rs1 && rs1 != 0) || (ex_m_rd == rs2 && rs2 != 0)) begin
+          data_hazard = 1'b1;
+        end
+      end
+      
+      // Check A operation in progress
+      if (ex_is_a_op && !a_result_valid) begin
+        if ((ex_a_rd == rs1 && rs1 != 0) || (ex_a_rd == rs2 && rs2 != 0)) begin
+          data_hazard = 1'b1;
+        end
       end
     end
 
     pipeline_stall = load_use_hazard || data_hazard || 
-                        cp_stall_external || !imem_ready || 
-                        (ex_mem_read && !dmem_ready) || 
-                        (ex_mem_write && !dmem_ready);
+                     m_stall || a_stall_req ||
+                     cp_stall_external || !imem_ready || 
+                     (ex_mem_read && !dmem_ready) || 
+                     (ex_mem_write && !dmem_ready);
   end
 
   // ========================================

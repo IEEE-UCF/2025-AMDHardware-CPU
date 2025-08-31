@@ -114,6 +114,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.sublime-*
+.venv/
 
 # OS files
 .DS_Store
