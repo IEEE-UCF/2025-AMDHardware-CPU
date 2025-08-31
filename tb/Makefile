@@ -12,12 +12,11 @@ VERILOG_SOURCES += ../src/gpu_result_buffer.sv
 VERILOG_SOURCES += ../src/gpu_result_wb.sv
 VERILOG_SOURCES += ../src/imme.sv
 VERILOG_SOURCES += ../src/instruction_buffer.sv
-VERILOG_SOURCES += ../src/interconnect.sv
+VERILOG_SOURCES += ../src/_interconnect.sv
 VERILOG_SOURCES += ../src/memory_system.sv
 VERILOG_SOURCES += ../src/mmu.sv
 VERILOG_SOURCES += ../src/offload_logic.sv
 VERILOG_SOURCES += ../src/pipeline_stages.sv
-VERILOG_SOURCES += ../src/register_stages.sv
 
 TOPLEVEL_LANG = verilog
 
@@ -26,7 +25,7 @@ include $(shell cocotb-config --makefiles)/Makefile.sim
 # Make 'all_tests_live' the default target when no target is specified
 .DEFAULT_GOAL := all_tests
 
-TESTBENCHES = branch_calc:branch_calc_tb bypass_mux:bypass_mux_tb control_unit:control_unit_tb coprocessor_system:coprocessor_system_tb cpu_top:cpu_top_tb dispatcher:dispatcher_tb equ:equ_tb gpu_op_queue:gpu_op_queue_tb gpu_result_buffer:gpu_result_buffer_tb gpu_result_wb:gpu_result_wb_tb imme:imme_tb instruction_buffer:instruction_buffer_tb interconnect:interconnect_tb memory_system:memory_system_tb mmu:mmu_tb offload_logic:offload_logic_tb pipeline_stages:pipeline_stages_tb register_stages:register_stages_tb 
+TESTBENCHES = branch_calc:branch_calc_tb bypass_mux:bypass_mux_tb control_unit:control_unit_tb coprocessor_system:coprocessor_system_tb cpu_top:cpu_top_tb dispatcher:dispatcher_tb equ:equ_tb gpu_op_queue:gpu_op_queue_tb gpu_result_buffer:gpu_result_buffer_tb gpu_result_wb:gpu_result_wb_tb imme:imme_tb instruction_buffer:instruction_buffer_tb _interconnect:interconnect_tb memory_system:memory_system_tb mmu:mmu_tb offload_logic:offload_logic_tb pipeline_stages:pipeline_stages_tb register_stages:register_stages_tb 
 
 .PHONY: all_tests
 all_tests:
@@ -107,7 +106,7 @@ instruction_buffer:
 
 .PHONY: interconnect
 interconnect:
-	$(MAKE) sim TOPLEVEL=interconnect MODULE=interconnect_tb SIM_BUILD=sim_interconnect
+	$(MAKE) sim TOPLEVEL=_interconnect MODULE=interconnect_tb SIM_BUILD=sim_interconnect
 
 .PHONY: memory_system
 memory_system:
