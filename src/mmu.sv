@@ -1,8 +1,8 @@
 module mmu #(
-    parameter VADDR_WIDTH = 64,  // Virtual address width
-    parameter PADDR_WIDTH = 64,  // Physical address width
-    parameter DATA_WIDTH = 64,
-    parameter TLB_ENTRIES = 32,  // Number of TLB entries
+    parameter VADDR_WIDTH = 32,  // Virtual address width - 32-bit for Red Pitaya
+    parameter PADDR_WIDTH = 32,  // Physical address width - 32-bit for Red Pitaya
+    parameter DATA_WIDTH = 32,   // Data width - 32-bit for Red Pitaya
+    parameter TLB_ENTRIES = 16,  // Reduced TLB entries for smaller FPGA
     parameter PAGE_SIZE = 4096   // 4KB pages
 )(
     input  logic                    clk,
@@ -34,27 +34,27 @@ module mmu #(
     input  logic [VADDR_WIDTH-1:0] tlb_flush_addr
 );
 
-    localparam VPN_WIDTH = 27;  // Virtual Page Number width (39-bit VA / 4KB pages)
-    localparam PPN_WIDTH = 44;  // Physical Page Number width (56-bit PA / 4KB pages)
+    localparam VPN_WIDTH = 10;   // Virtual Page Number width for 32-bit (20 bits / 2 levels)
+    localparam PPN_WIDTH = 20;   // Physical Page Number width (32-bit PA / 4KB pages)
     localparam OFFSET_WIDTH = 12; // Page offset (4KB)
     
-    // Page Table Entry (PTE) format for Sv39 - simplified for Icarus
-    logic [9:0]  pte_reserved;
-    logic [43:0] pte_ppn;      // Physical page number
-    logic [1:0]  pte_rsw;      // Reserved for software
-    logic        pte_d;        // Dirty
-    logic        pte_a;        // Accessed
-    logic        pte_g;        // Global
-    logic        pte_u;        // User
-    logic        pte_x;        // Execute
-    logic        pte_w;        // Write
-    logic        pte_r;        // Read
-    logic        pte_v;        // Valid
+    // Page Table Entry (PTE) format for Sv32
+    logic [11:0] pte_ppn1;      // Physical page number[31:20]
+    logic [9:0]  pte_ppn0;      // Physical page number[19:10]
+    logic [1:0]  pte_rsw;       // Reserved for software
+    logic        pte_d;         // Dirty
+    logic        pte_a;         // Accessed
+    logic        pte_g;         // Global
+    logic        pte_u;         // User
+    logic        pte_x;         // Execute
+    logic        pte_w;         // Write
+    logic        pte_r;         // Read
+    logic        pte_v;         // Valid
     
-    // TLB Entry - simplified structure
+    // TLB Entry - simplified structure for 32-bit
     logic              tlb_valid [TLB_ENTRIES-1:0];
-    logic [26:0]       tlb_vpn [TLB_ENTRIES-1:0];      // Virtual page number
-    logic [43:0]       tlb_ppn [TLB_ENTRIES-1:0];      // Physical page number
+    logic [19:0]       tlb_vpn [TLB_ENTRIES-1:0];      // Virtual page number
+    logic [19:0]       tlb_ppn [TLB_ENTRIES-1:0];      // Physical page number
     logic              tlb_g [TLB_ENTRIES-1:0];        // Global
     logic              tlb_u [TLB_ENTRIES-1:0];        // User accessible
     logic              tlb_x [TLB_ENTRIES-1:0];        // Execute permission
@@ -62,25 +62,24 @@ module mmu #(
     logic              tlb_r [TLB_ENTRIES-1:0];        // Read permission
     logic              tlb_d [TLB_ENTRIES-1:0];        // Dirty
     logic              tlb_a [TLB_ENTRIES-1:0];        // Accessed
-    logic [1:0]        tlb_level [TLB_ENTRIES-1:0];    // Page level (0=4KB, 1=2MB, 2=1GB)
+    logic              tlb_level [TLB_ENTRIES-1:0];    // Page level (0=4KB, 1=4MB)
     
     logic [$clog2(TLB_ENTRIES)-1:0] tlb_replace_idx;
     
-    // Address breakdown
-    logic [8:0]  vpn2, vpn1, vpn0;  // Virtual page number components
+    // Address breakdown for Sv32
+    logic [9:0]  vpn1, vpn0;  // Virtual page number components
     logic [11:0] page_offset;
     
-    assign vpn2 = vaddr[38:30];
-    assign vpn1 = vaddr[29:21];
-    assign vpn0 = vaddr[20:12];
+    assign vpn1 = vaddr[31:22];
+    assign vpn0 = vaddr[21:12];
     assign page_offset = vaddr[11:0];
     
     // TLB lookup
     logic tlb_hit;
     logic [$clog2(TLB_ENTRIES)-1:0] tlb_hit_idx;
     logic              tlb_hit_valid;
-    logic [26:0]       tlb_hit_vpn;
-    logic [43:0]       tlb_hit_ppn;
+    logic [19:0]       tlb_hit_vpn;
+    logic [19:0]       tlb_hit_ppn;
     logic              tlb_hit_g;
     logic              tlb_hit_u;
     logic              tlb_hit_x;
@@ -88,7 +87,7 @@ module mmu #(
     logic              tlb_hit_r;
     logic              tlb_hit_d;
     logic              tlb_hit_a;
-    logic [1:0]        tlb_hit_level;
+    logic              tlb_hit_level;
     
     integer i;
     
@@ -105,19 +104,20 @@ module mmu #(
         tlb_hit_r = 1'b0;
         tlb_hit_d = 1'b0;
         tlb_hit_a = 1'b0;
-        tlb_hit_level = 2'b00;
+        tlb_hit_level = 1'b0;
         
         for (i = 0; i < TLB_ENTRIES; i = i + 1) begin
             if (tlb_valid[i] && !tlb_hit) begin
                 logic vpn_match;
                 
                 // Check VPN based on page size
-                case (tlb_level[i])
-                    2'd0: vpn_match = (tlb_vpn[i] == {vpn2, vpn1, vpn0}); // 4KB page
-                    2'd1: vpn_match = (tlb_vpn[i][26:9] == {vpn2, vpn1}); // 2MB page
-                    2'd2: vpn_match = (tlb_vpn[i][26:18] == vpn2);        // 1GB page
-                    default: vpn_match = 1'b0;
-                endcase
+                if (tlb_level[i]) begin
+                    // 4MB page (superpage)
+                    vpn_match = (tlb_vpn[i][19:10] == vpn1);
+                end else begin
+                    // 4KB page
+                    vpn_match = (tlb_vpn[i] == {vpn1, vpn0});
+                end
                 
                 if (vpn_match) begin
                     tlb_hit = 1'b1;
@@ -165,11 +165,10 @@ module mmu #(
         end
     end
 
-    // Page table walk state machine - simplified
+    // Page table walk state machine - simplified for Sv32
     typedef enum logic [2:0] {
         IDLE,
-        PTW_L2,     // Level 2 (1GB pages)
-        PTW_L1,     // Level 1 (2MB pages)
+        PTW_L1,     // Level 1 (4MB pages)
         PTW_L0,     // Level 0 (4KB pages)
         PTW_WAIT,
         UPDATE_TLB,
@@ -177,14 +176,14 @@ module mmu #(
     } ptw_state_t;
     
     ptw_state_t ptw_state, ptw_next_state;
-    logic [63:0] pte_data;
-    logic [1:0] ptw_level;
+    logic [31:0] pte_data;
+    logic ptw_level;
     logic [PADDR_WIDTH-1:0] ptw_base;
     
     // Extract PTE fields from data
     always_comb begin
-        pte_reserved = ptw_data[63:54];
-        pte_ppn      = ptw_data[53:10];
+        pte_ppn1     = ptw_data[31:20];
+        pte_ppn0     = ptw_data[19:10];
         pte_rsw      = ptw_data[9:8];
         pte_d        = ptw_data[7];
         pte_a        = ptw_data[6];
@@ -209,23 +208,18 @@ module mmu #(
             case (ptw_state)
                 IDLE: begin
                     if (!tlb_hit && req_valid && vm_enable) begin
-                        ptw_base <= satp[43:0] << 12; // Page table base
-                        ptw_level <= 2'd2; // Start at level 2
+                        ptw_base <= satp[19:0] << 12; // Page table base
+                        ptw_level <= 1'b1; // Start at level 1
                     end
                 end
                 
-                PTW_L2: begin
-                    ptw_addr <= ptw_base + (vpn2 << 3);
-                end
-                
                 PTW_L1: begin
-                    ptw_addr <= (pte_ppn << 12) + (vpn1 << 3);
-                    ptw_level <= 2'd1;
+                    ptw_addr <= ptw_base + (vpn1 << 2); // 4-byte PTEs
                 end
                 
                 PTW_L0: begin
-                    ptw_addr <= (pte_ppn << 12) + (vpn0 << 3);
-                    ptw_level <= 2'd0;
+                    ptw_addr <= ({pte_ppn1, pte_ppn0} << 12) + (vpn0 << 2);
+                    ptw_level <= 1'b0;
                 end
                 
                 PTW_WAIT: begin
@@ -237,8 +231,8 @@ module mmu #(
                 UPDATE_TLB: begin
                     // Update TLB with new entry
                     tlb_valid[tlb_replace_idx] <= 1'b1;
-                    tlb_vpn[tlb_replace_idx] <= {vpn2, vpn1, vpn0};
-                    tlb_ppn[tlb_replace_idx] <= pte_ppn;
+                    tlb_vpn[tlb_replace_idx] <= {vpn1, vpn0};
+                    tlb_ppn[tlb_replace_idx] <= {pte_ppn1, pte_ppn0};
                     tlb_g[tlb_replace_idx] <= pte_g;
                     tlb_u[tlb_replace_idx] <= pte_u;
                     tlb_x[tlb_replace_idx] <= pte_x;
@@ -263,11 +257,11 @@ module mmu #(
         case (ptw_state)
             IDLE: begin
                 if (!tlb_hit && req_valid && vm_enable) begin
-                    ptw_next_state = PTW_L2;
+                    ptw_next_state = PTW_L1;
                 end
             end
             
-            PTW_L2, PTW_L1, PTW_L0: begin
+            PTW_L1, PTW_L0: begin
                 ptw_req = 1'b1;
                 ptw_next_state = PTW_WAIT;
             end
@@ -276,12 +270,8 @@ module mmu #(
                 if (ptw_ready) begin
                     if (!pte_v || (!pte_r && !pte_w && !pte_x)) begin
                         // Invalid PTE or pointer to next level
-                        if (ptw_level > 0) begin
-                            case (ptw_level)
-                                2'd2: ptw_next_state = PTW_L1;
-                                2'd1: ptw_next_state = PTW_L0;
-                                default: ptw_next_state = FAULT;
-                            endcase
+                        if (ptw_level) begin
+                            ptw_next_state = PTW_L0;
                         end else begin
                             ptw_next_state = FAULT;
                         end
@@ -314,7 +304,7 @@ module mmu #(
                 if (tlb_flush_vaddr) begin
                     // Flush specific address
                     for (i = 0; i < TLB_ENTRIES; i = i + 1) begin
-                        if (tlb_valid[i] && tlb_vpn[i] == tlb_flush_addr[38:12]) begin
+                        if (tlb_valid[i] && tlb_vpn[i] == tlb_flush_addr[31:12]) begin
                             tlb_valid[i] <= 1'b0;
                         end
                     end
@@ -338,23 +328,25 @@ module mmu #(
             access_fault = 1'b0;
         end else if (tlb_hit) begin
             // TLB hit - translate address
-            case (tlb_hit_level)
-                2'd0: paddr = {tlb_hit_ppn, page_offset};
-                2'd1: paddr = {tlb_hit_ppn[43:9], vpn0, page_offset};
-                2'd2: paddr = {tlb_hit_ppn[43:18], vpn1, vpn0, page_offset};
-                default: paddr = '0;
-            endcase
+            if (tlb_hit_level) begin
+                // 4MB page
+                paddr = {tlb_hit_ppn[19:10], vpn0, page_offset};
+            end else begin
+                // 4KB page
+                paddr = {tlb_hit_ppn, page_offset};
+            end
             trans_valid = perm_valid;
             page_fault = !tlb_hit_valid;
             access_fault = !perm_valid;
         end else if (ptw_state == UPDATE_TLB) begin
             // Just completed page table walk
-            case (ptw_level)
-                2'd0: paddr = {pte_ppn, page_offset};
-                2'd1: paddr = {pte_ppn[43:9], vpn0, page_offset};
-                2'd2: paddr = {pte_ppn[43:18], vpn1, vpn0, page_offset};
-                default: paddr = '0;
-            endcase
+            if (ptw_level) begin
+                // 4MB page
+                paddr = {{pte_ppn1, pte_ppn0}[19:10], vpn0, page_offset};
+            end else begin
+                // 4KB page
+                paddr = {pte_ppn1, pte_ppn0, page_offset};
+            end
             trans_valid = 1'b1;
             page_fault = 1'b0;
             access_fault = 1'b0;

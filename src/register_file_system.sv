@@ -1,5 +1,5 @@
 module register_file_system #(
-    parameter DATA_WIDTH = 64,
+    parameter DATA_WIDTH = 32,   // Fixed to 32-bit for Red Pitaya
     parameter INT_REG_NUM = 32,  // Integer registers (x0-x31)
     parameter FP_REG_NUM = 32,   // Floating point registers (f0-f31)
     parameter VEC_REG_NUM = 32,  // Vector registers (v0-v31) for future use
@@ -121,7 +121,7 @@ module register_file_system #(
         end
     end
     
-    // Machine-level CSRs
+    // Machine-level CSRs for RV32
     logic [DATA_WIDTH-1:0] mstatus;    // Machine status
     logic [DATA_WIDTH-1:0] misa;       // ISA and extensions
     logic [DATA_WIDTH-1:0] mie;        // Machine interrupt enable
@@ -143,7 +143,7 @@ module register_file_system #(
     logic [DATA_WIDTH-1:0] sip;        // Supervisor interrupt pending
     logic [DATA_WIDTH-1:0] satp;       // Supervisor address translation
     
-    // Performance counters
+    // Performance counters (64-bit even in RV32)
     logic [63:0] cycle_counter;
     logic [63:0] instret_counter;
     logic [63:0] time_counter;
@@ -199,9 +199,9 @@ module register_file_system #(
             CSR_SIP:      csr_rdata = sip;
             CSR_SATP:     csr_rdata = satp;
             
-            CSR_CYCLE:    csr_rdata = cycle_counter;
-            CSR_TIME:     csr_rdata = time_counter;
-            CSR_INSTRET:  csr_rdata = instret_counter;
+            CSR_CYCLE:    csr_rdata = cycle_counter[31:0];
+            CSR_TIME:     csr_rdata = time_counter[31:0];
+            CSR_INSTRET:  csr_rdata = instret_counter[31:0];
             CSR_CYCLEH:   csr_rdata = cycle_counter[63:32];
             CSR_TIMEH:    csr_rdata = time_counter[63:32];
             CSR_INSTRETH: csr_rdata = instret_counter[63:32];
@@ -214,7 +214,7 @@ module register_file_system #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             mstatus <= '0;
-            misa <= 64'h8000000000141101; // RV64IMAFDC
+            misa <= 32'h40141101; // RV32IMAC
             mie <= '0;
             mtvec <= '0;
             mscratch <= '0;
@@ -284,7 +284,7 @@ module register_file_system #(
                 if (priv_mode == 2'b11 || (priv_mode < 2'b11 && !mstatus[3])) begin
                     // Trap to M-mode
                     mepc <= pc;
-                    mcause <= {60'b0, exception_code};
+                    mcause <= {28'b0, exception_code};
                     mstatus[7] <= mstatus[3]; // MPIE = MIE
                     mstatus[3] <= 1'b0;       // MIE = 0
                     mstatus[12:11] <= priv_mode; // MPP = current mode
@@ -292,7 +292,7 @@ module register_file_system #(
                 end else begin
                     // Trap to S-mode
                     sepc <= pc;
-                    scause <= {60'b0, exception_code};
+                    scause <= {28'b0, exception_code};
                     sstatus[5] <= sstatus[1]; // SPIE = SIE
                     sstatus[1] <= 1'b0;       // SIE = 0
                     sstatus[8] <= priv_mode[0]; // SPP = current mode
@@ -363,7 +363,7 @@ endmodule
 
 module register_bank_cpu #(
     parameter REG_NUM = 32,
-    parameter DATA_WIDTH = 64
+    parameter DATA_WIDTH = 32  // Fixed to 32-bit
 )(
     input  logic                       clk,
     input  logic                       reset,

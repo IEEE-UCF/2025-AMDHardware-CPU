@@ -34,101 +34,145 @@ module cpu_top #(
     output logic [3:0]               debug_state
 );
     
-    // Pipeline Registers - All 32-bit addresses
-    logic [ADDR_WIDTH-1:0]   if_id_pc;
-    logic [ADDR_WIDTH-1:0]   if_id_pc4;
-    logic [INST_WIDTH-1:0]   if_id_inst;
-    logic                    if_id_valid;
+    // Pipeline Registers
+    logic [ADDR_WIDTH-1:0]   if_pc;
+    logic [ADDR_WIDTH-1:0]   if_pc4;
+    logic [INST_WIDTH-1:0]   if_inst;
+    logic                    if_valid;
     
-    logic [ADDR_WIDTH-1:0]   id_ex_pc;
-    logic [DATA_WIDTH-1:0]   id_ex_rs1_data;
-    logic [DATA_WIDTH-1:0]   id_ex_rs2_data;
-    logic [DATA_WIDTH-1:0]   id_ex_imm;
-    logic [4:0]              id_ex_rd;
-    logic [4:0]              id_ex_rs1;
-    logic [4:0]              id_ex_rs2;
-    logic [4:0]              id_ex_alu_op;
-    logic                    id_ex_alu_src;
-    logic                    id_ex_mem_read;
-    logic                    id_ex_mem_write;
-    logic                    id_ex_reg_write;
-    logic                    id_ex_branch;
-    logic                    id_ex_jump;
-    logic                    id_ex_valid;
-    logic [2:0]              id_ex_funct3;
+    logic [ADDR_WIDTH-1:0]   id_pc;
+    logic [ADDR_WIDTH-1:0]   id_pc4;
+    logic [INST_WIDTH-1:0]   id_inst;
+    logic [DATA_WIDTH-1:0]   id_rs1_data;
+    logic [DATA_WIDTH-1:0]   id_rs2_data;
+    logic [DATA_WIDTH-1:0]   id_imm;
+    logic [4:0]              id_rd;
+    logic [4:0]              id_rs1;
+    logic [4:0]              id_rs2;
+    logic [4:0]              id_alu_op;
+    logic                    id_alu_src;
+    logic                    id_mem_read;
+    logic                    id_mem_write;
+    logic                    id_reg_write;
+    logic                    id_branch;
+    logic                    id_jump;
+    logic                    id_valid;
+    logic [2:0]              id_funct3;
     
-    logic [DATA_WIDTH-1:0]   ex_mem_alu_result;
-    logic [DATA_WIDTH-1:0]   ex_mem_rs2_data;
-    logic [4:0]              ex_mem_rd;
-    logic                    ex_mem_mem_read;
-    logic                    ex_mem_mem_write;
-    logic                    ex_mem_reg_write;
-    logic                    ex_mem_valid;
-    logic [2:0]              ex_mem_funct3;
+    logic [DATA_WIDTH-1:0]   ex_alu_result;
+    logic [DATA_WIDTH-1:0]   ex_rs2_data;
+    logic [4:0]              ex_rd;
+    logic                    ex_mem_read;
+    logic                    ex_mem_write;
+    logic                    ex_reg_write;
+    logic                    ex_valid;
+    logic [2:0]              ex_funct3;
     
-    logic [DATA_WIDTH-1:0]   mem_wb_alu_result;
-    logic [DATA_WIDTH-1:0]   mem_wb_mem_data;
-    logic [4:0]              mem_wb_rd;
-    logic                    mem_wb_reg_write;
-    logic                    mem_wb_mem_to_reg;
-    logic                    mem_wb_valid;
+    logic [DATA_WIDTH-1:0]   mem_alu_result;
+    logic [DATA_WIDTH-1:0]   mem_mem_data;
+    logic [4:0]              mem_rd;
+    logic                    mem_reg_write;
+    logic                    mem_mem_to_reg;
+    logic                    mem_valid;
+    
+    logic [DATA_WIDTH-1:0]   wb_data;
+    logic [4:0]              wb_rd;
+    logic                    wb_reg_write;
     
     // Control signals
-    logic                    stall_if;
-    logic                    stall_id;
-    logic                    stall_ex;
-    logic                    stall_mem;
-    logic                    flush_if;
-    logic                    flush_id;
-    logic                    flush_ex;
-    
-    // Branch/Jump signals
+    logic                    stall;
+    logic                    flush;
     logic                    branch_taken;
     logic [ADDR_WIDTH-1:0]   branch_target;
     logic                    jump_taken;
     logic [ADDR_WIDTH-1:0]   jump_target;
+    logic                    is_equal;
+    logic [1:0]              pc_sel;
+    logic [1:0]              imm_type;
+    logic                    has_imm;
+    logic                    has_rs1;
+    logic                    has_rs2;
+    logic                    has_rs3;
+    logic                    is_load;
+    logic [ADDR_WIDTH-1:0]   bra_addr;
+    logic [ADDR_WIDTH-1:0]   jal_addr;
+    logic [ADDR_WIDTH-1:0]   jalr_addr;
+    logic                    inst_buffer_empty;
+    logic                    inst_buffer_full;
     
     // Hazard detection
     logic                    data_hazard;
     logic                    load_use_hazard;
     logic                    control_hazard;
     
-    // Forwarding signals
-    logic [1:0]              forward_a;
-    logic [1:0]              forward_b;
-    
     // Combined stall signal
     logic                    global_stall;
-    assign global_stall = stall_if || stall_id || stall_ex || stall_mem || 
-                         !imem_ready || !dmem_ready || cp_stall_external;
+    assign global_stall = stall || !imem_ready || !dmem_ready || cp_stall_external;
     
     // Debug outputs
-    assign debug_pc = if_id_pc;
+    assign debug_pc = if_pc;
     assign debug_stall = global_stall;
-    assign debug_state = {flush_ex, flush_id, flush_if, global_stall};
-    assign cp_instruction_out = if_id_inst;
+    assign debug_state = {flush, branch_taken, jump_taken, global_stall};
+    assign cp_instruction_out = if_inst;
     
-    // Simple coprocessor detection
+    // Control unit for instruction decode
+    control_unit #(
+        .INST_WIDTH(INST_WIDTH)
+    ) u_control (
+        .instruction(if_inst),
+        .inst_valid(if_valid),
+        .reg_write(id_reg_write),
+        .mem_read(id_mem_read),
+        .mem_write(id_mem_write),
+        .alu_op(id_alu_op),
+        .alu_src(id_alu_src),
+        .imm_type(imm_type),
+        .branch(id_branch),
+        .jump(id_jump),
+        .jalr(),
+        .lui(),
+        .auipc(),
+        .system(cp_instruction_detected),
+        .opcode(),
+        .funct3(id_funct3),
+        .funct7(),
+        .rd(id_rd),
+        .rs1(id_rs1),
+        .rs2(id_rs2)
+    );
+    
+    // Determine control signals based on instruction type
     always_comb begin
-        cp_instruction_detected = 1'b0;
-        if (if_id_valid) begin
-            case (if_id_inst[6:0])
-                7'b1110011, // System
-                7'b1010011, // FP
-                7'b0001011, // Custom-0
-                7'b0101011: // Custom-1
-                    cp_instruction_detected = 1'b1;
-                default:
-                    cp_instruction_detected = 1'b0;
-            endcase
-        end
+        has_imm = id_alu_src || id_mem_read || id_mem_write || id_branch || id_jump;
+        has_rs1 = !id_jump; // JAL doesn't use rs1
+        has_rs2 = !id_alu_src && !id_mem_read && !id_jump; // Only R-type and branches
+        has_rs3 = 1'b0; // No FMA instructions in base ISA
+        is_load = id_mem_read;
+        
+        // PC selection logic
+        if (jump_taken)
+            pc_sel = 2'b10; // JAL
+        else if (branch_taken)
+            pc_sel = 2'b01; // Branch
+        else if (id_jump && id_alu_src) // JALR
+            pc_sel = 2'b11;
+        else
+            pc_sel = 2'b00; // PC+4
+    end
+    
+    // Branch decision
+    always_comb begin
+        branch_taken = id_branch && is_equal;
+        branch_target = bra_addr;
+        jump_taken = id_jump && !id_alu_src; // JAL
+        jump_target = jal_addr;
     end
     
     // Generate byte enables based on memory operation type
     always_comb begin
         dmem_byte_enable = 4'hF;  // Default: full word
-        if (ex_mem_mem_write || ex_mem_mem_read) begin
-            case (ex_mem_funct3)
+        if (ex_mem_write || ex_mem_read) begin
+            case (ex_funct3)
                 3'b000: dmem_byte_enable = 4'h1;  // SB/LB
                 3'b001: dmem_byte_enable = 4'h3;  // SH/LH
                 3'b010: dmem_byte_enable = 4'hF;  // SW/LW
@@ -138,376 +182,188 @@ module cpu_top #(
     end
     
     // Pipeline IF Stage
-    pipeline_if #(
+    stage_if #(
         .ADDR_WIDTH(ADDR_WIDTH),
-        .INST_WIDTH(INST_WIDTH)
+        .INST_WIDTH(INST_WIDTH),
+        .PC_TYPE_NUM(4)
     ) u_if (
         .clk(clk),
-        .rst_n(rst_n),
-        .stall(stall_if || global_stall),
-        .flush(flush_if),
-        .branch_taken(branch_taken),
-        .branch_target(branch_target),
-        .jump_taken(jump_taken),
-        .jump_target(jump_target),
-        .imem_addr(imem_addr),
-        .imem_read_data(imem_read_data),
-        .imem_read(imem_read),
-        .imem_ready(imem_ready),
-        .if_id_pc(if_id_pc),
-        .if_id_pc4(if_id_pc4),
-        .if_id_inst(if_id_inst),
-        .if_id_valid(if_id_valid)
+        .reset(~rst_n),
+        .stall(global_stall),
+        .inst_w_en(1'b0), // Not writing instructions during runtime
+        .inst_w_in('0),
+        .pc_sel(pc_sel),
+        .bra_addr(bra_addr),
+        .jal_addr(jal_addr),
+        .jar_addr(jalr_addr),
+        .pc(if_pc),
+        .pc4(if_pc4),
+        .inst_word(if_inst),
+        .inst_valid(if_valid),
+        .inst_buffer_empty(inst_buffer_empty),
+        .inst_buffer_full(inst_buffer_full)
     );
     
+    // Connect instruction memory
+    assign imem_addr = if_pc;
+    assign imem_read = 1'b1;
+    assign if_inst = imem_ready ? imem_read_data : 32'h00000013; // NOP if not ready
+    
     // Pipeline ID Stage
-    pipeline_id #(
+    stage_id #(
         .ADDR_WIDTH(ADDR_WIDTH),
-        .DATA_WIDTH(DATA_WIDTH),
         .INST_WIDTH(INST_WIDTH),
         .REG_NUM(REG_NUM)
     ) u_id (
         .clk(clk),
-        .rst_n(rst_n),
-        .stall(stall_id || global_stall),
-        .flush(flush_id),
-        .if_id_pc(if_id_pc),
-        .if_id_pc4(if_id_pc4),
-        .if_id_inst(if_id_inst),
-        .if_id_valid(if_id_valid),
-        .wb_data(mem_wb_mem_to_reg ? mem_wb_mem_data : mem_wb_alu_result),
-        .wb_rd(mem_wb_rd),
-        .wb_reg_write(mem_wb_reg_write),
-        .id_ex_pc(id_ex_pc),
-        .id_ex_rs1_data(id_ex_rs1_data),
-        .id_ex_rs2_data(id_ex_rs2_data),
-        .id_ex_imm(id_ex_imm),
-        .id_ex_rd(id_ex_rd),
-        .id_ex_rs1(id_ex_rs1),
-        .id_ex_rs2(id_ex_rs2),
-        .id_ex_alu_op(id_ex_alu_op),
-        .id_ex_alu_src(id_ex_alu_src),
-        .id_ex_mem_read(id_ex_mem_read),
-        .id_ex_mem_write(id_ex_mem_write),
-        .id_ex_reg_write(id_ex_reg_write),
-        .id_ex_branch(id_ex_branch),
-        .id_ex_jump(id_ex_jump),
-        .id_ex_valid(id_ex_valid),
-        .id_ex_funct3(id_ex_funct3),
-        .branch_taken(branch_taken),
-        .branch_target(branch_target),
-        .jump_taken(jump_taken),
-        .jump_target(jump_target)
+        .reset(~rst_n),
+        .interrupt(interrupt),
+        .stall(global_stall),
+        .w_en(wb_reg_write),
+        .w_en_gpu(1'b0), // No GPU writes for now
+        .has_imm(has_imm),
+        .has_rs1(has_rs1),
+        .has_rs2(has_rs2),
+        .has_rs3(has_rs3),
+        .imm_type(imm_type),
+        .pc4(if_pc4),
+        .pc(if_pc),
+        .w_result(wb_data),
+        .w_result_gpu('0),
+        .ex_pro(ex_alu_result),
+        .mm_pro(mem_alu_result),
+        .mm_mem(mem_mem_data),
+        .inst_word(if_inst),
+        .load_rd(ex_rd),
+        .is_load(ex_mem_read),
+        .w_rd(wb_rd),
+        .ex_wr_reg_en(ex_reg_write),
+        .mm_wr_reg_en(mem_reg_write),
+        .mm_is_load(mem_mem_to_reg),
+        .ex_rd(ex_rd),
+        .mm_rd(mem_rd),
+        .w_rd_gpu('0),
+        .rs_gpu('0),
+        .is_equal(is_equal),
+        .read_out_gpu(),
+        .read_out_a(id_rs1_data),
+        .read_out_b(id_rs2_data),
+        .bra_addr(bra_addr),
+        .jal_addr(jal_addr),
+        .jar_addr(jalr_addr)
     );
+    
+    // Store ID stage outputs for EX stage
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n || flush) begin
+            id_pc <= '0;
+            id_pc4 <= '0;
+            id_inst <= 32'h00000013; // NOP
+            id_imm <= '0;
+            id_valid <= 1'b0;
+            ex_rs2_data <= '0;
+        end else if (!global_stall) begin
+            id_pc <= if_pc;
+            id_pc4 <= if_pc4;
+            id_inst <= if_inst;
+            id_valid <= if_valid;
+            ex_rs2_data <= id_rs2_data; // Pass through for memory writes
+            
+            // Generate immediate based on instruction type
+            case (imm_type)
+                2'b00: id_imm <= {{20{if_inst[31]}}, if_inst[31:20]}; // I-type
+                2'b01: id_imm <= {{20{if_inst[31]}}, if_inst[31:25], if_inst[11:7]}; // S-type
+                2'b10: id_imm <= {if_inst[31:12], 12'b0}; // U-type
+                2'b11: id_imm <= {{19{if_inst[31]}}, if_inst[31], if_inst[7], if_inst[30:25], if_inst[11:8], 1'b0}; // B-type
+            endcase
+        end
+    end
     
     // Pipeline EX Stage
-    pipeline_ex #(
-        .ADDR_WIDTH(ADDR_WIDTH),
+    pl_stage_exe #(
         .DATA_WIDTH(DATA_WIDTH)
     ) u_ex (
-        .clk(clk),
-        .rst_n(rst_n),
-        .stall(stall_ex || global_stall),
-        .flush(flush_ex),
-        .id_ex_pc(id_ex_pc),
-        .id_ex_rs1_data(id_ex_rs1_data),
-        .id_ex_rs2_data(id_ex_rs2_data),
-        .id_ex_imm(id_ex_imm),
-        .id_ex_rd(id_ex_rd),
-        .id_ex_rs1(id_ex_rs1),
-        .id_ex_rs2(id_ex_rs2),
-        .id_ex_alu_op(id_ex_alu_op),
-        .id_ex_alu_src(id_ex_alu_src),
-        .id_ex_mem_read(id_ex_mem_read),
-        .id_ex_mem_write(id_ex_mem_write),
-        .id_ex_reg_write(id_ex_reg_write),
-        .id_ex_valid(id_ex_valid),
-        .id_ex_funct3(id_ex_funct3),
-        .forward_a(forward_a),
-        .forward_b(forward_b),
-        .ex_mem_alu_result(ex_mem_alu_result),
-        .mem_wb_alu_result(mem_wb_alu_result),
-        .mem_wb_mem_data(mem_wb_mem_data),
-        .ex_mem_alu_result_out(ex_mem_alu_result),
-        .ex_mem_rs2_data(ex_mem_rs2_data),
-        .ex_mem_rd(ex_mem_rd),
-        .ex_mem_mem_read(ex_mem_mem_read),
-        .ex_mem_mem_write(ex_mem_mem_write),
-        .ex_mem_reg_write(ex_mem_reg_write),
-        .ex_mem_valid(ex_mem_valid),
-        .ex_mem_funct3(ex_mem_funct3)
+        .ea(id_rs1_data),
+        .eb(id_alu_src ? id_imm : id_rs2_data),
+        .epc4(id_pc4),
+        .ealuc(id_alu_op),
+        .ecall(1'b0), // Handle in coprocessor
+        .eal(ex_alu_result)
     );
     
+    // Pipeline register EX->MEM
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            ex_rd <= '0;
+            ex_mem_read <= '0;
+            ex_mem_write <= '0;
+            ex_reg_write <= '0;
+            ex_valid <= '0;
+            ex_funct3 <= '0;
+        end else if (!global_stall) begin
+            ex_rd <= id_rd;
+            ex_mem_read <= id_mem_read;
+            ex_mem_write <= id_mem_write;
+            ex_reg_write <= id_reg_write;
+            ex_valid <= id_valid;
+            ex_funct3 <= id_funct3;
+        end
+    end
+    
     // Pipeline MEM Stage
-    pipeline_mem #(
-        .ADDR_WIDTH(ADDR_WIDTH),
-        .DATA_WIDTH(DATA_WIDTH)
+    mm_stage #(
+        .DATA_WIDTH(DATA_WIDTH),
+        .ADDR_WIDTH(ADDR_WIDTH)
     ) u_mem (
         .clk(clk),
         .rst_n(rst_n),
-        .stall(stall_mem || global_stall),
-        .ex_mem_alu_result(ex_mem_alu_result),
-        .ex_mem_rs2_data(ex_mem_rs2_data),
-        .ex_mem_rd(ex_mem_rd),
-        .ex_mem_mem_read(ex_mem_mem_read),
-        .ex_mem_mem_write(ex_mem_mem_write),
-        .ex_mem_reg_write(ex_mem_reg_write),
-        .ex_mem_valid(ex_mem_valid),
-        .dmem_addr(dmem_addr),
-        .dmem_write_data(dmem_write_data),
-        .dmem_read(dmem_read),
-        .dmem_write(dmem_write),
-        .dmem_read_data(dmem_read_data),
-        .dmem_ready(dmem_ready),
-        .mem_wb_alu_result(mem_wb_alu_result),
-        .mem_wb_mem_data(mem_wb_mem_data),
-        .mem_wb_rd(mem_wb_rd),
-        .mem_wb_reg_write(mem_wb_reg_write),
-        .mem_wb_mem_to_reg(mem_wb_mem_to_reg),
-        .mem_wb_valid(mem_wb_valid)
+        .ex_mem_alu_result(ex_alu_result),
+        .ex_mem_write_data(ex_rs2_data),
+        .ex_mem_rd(ex_rd),
+        .ex_mem_mem_read(ex_mem_read),
+        .ex_mem_mem_write(ex_mem_write),
+        .ex_mem_reg_write(ex_reg_write),
+        .mem_addr(dmem_addr),
+        .mem_write_data(dmem_write_data),
+        .mem_read(dmem_read),
+        .mem_write(dmem_write),
+        .mem_read_data(dmem_read_data),
+        .mem_wb_mem_data(mem_mem_data),
+        .mem_wb_alu_result(mem_alu_result),
+        .mem_wb_rd(mem_rd),
+        .mem_wb_reg_write(mem_reg_write)
     );
     
-    // Hazard Detection Unit
-    hazard_detection_unit #(
-        .REG_ADDR_WIDTH(5)
-    ) u_hazard (
-        .id_ex_mem_read(id_ex_mem_read),
-        .id_ex_rd(id_ex_rd),
-        .if_id_rs1(if_id_inst[19:15]),
-        .if_id_rs2(if_id_inst[24:20]),
-        .branch_taken(branch_taken),
-        .jump_taken(jump_taken),
-        .cp_stall(cp_instruction_detected && cp_stall_external),
-        .stall_if(stall_if),
-        .stall_id(stall_id),
-        .stall_ex(stall_ex),
-        .stall_mem(stall_mem),
-        .flush_if(flush_if),
-        .flush_id(flush_id),
-        .flush_ex(flush_ex),
-        .load_use_hazard(load_use_hazard),
-        .control_hazard(control_hazard)
+    // Determine if memory or ALU result
+    assign mem_mem_to_reg = ex_mem_read;
+    
+    // Pipeline WB Stage
+    pl_stage_wb #(
+        .DATA_WIDTH(DATA_WIDTH)
+    ) u_wb (
+        .walu(mem_alu_result),
+        .wmem(mem_mem_data),
+        .wmem2reg(mem_mem_to_reg),
+        .wdata(wb_data)
     );
     
-    // Forwarding Unit
-    forwarding_unit #(
-        .REG_ADDR_WIDTH(5)
-    ) u_forward (
-        .id_ex_rs1(id_ex_rs1),
-        .id_ex_rs2(id_ex_rs2),
-        .ex_mem_rd(ex_mem_rd),
-        .ex_mem_reg_write(ex_mem_reg_write),
-        .mem_wb_rd(mem_wb_rd),
-        .mem_wb_reg_write(mem_wb_reg_write),
-        .forward_a(forward_a),
-        .forward_b(forward_b)
-    );
-
-endmodule
-
-// Fixed Pipeline IF Stage
-module pipeline_if #(
-    parameter ADDR_WIDTH = 32,
-    parameter INST_WIDTH = 32
-)(
-    input  logic                    clk,
-    input  logic                    rst_n,
-    input  logic                    stall,
-    input  logic                    flush,
-    input  logic                    branch_taken,
-    input  logic [ADDR_WIDTH-1:0]   branch_target,
-    input  logic                    jump_taken,
-    input  logic [ADDR_WIDTH-1:0]   jump_target,
+    // WB control signals
+    assign wb_rd = mem_rd;
+    assign wb_reg_write = mem_reg_write;
     
-    output logic [ADDR_WIDTH-1:0]   imem_addr,
-    input  logic [INST_WIDTH-1:0]   imem_read_data,
-    output logic                    imem_read,
-    input  logic                    imem_ready,
-    
-    output logic [ADDR_WIDTH-1:0]   if_id_pc,
-    output logic [ADDR_WIDTH-1:0]   if_id_pc4,
-    output logic [INST_WIDTH-1:0]   if_id_inst,
-    output logic                    if_id_valid
-);
-
-    logic [ADDR_WIDTH-1:0] pc_reg;
-    logic [ADDR_WIDTH-1:0] pc_next;
-    
-    // PC update logic
+    // Simple hazard detection
     always_comb begin
-        if (jump_taken)
-            pc_next = jump_target;
-        else if (branch_taken)
-            pc_next = branch_target;
-        else if (!stall)
-            pc_next = pc_reg + 4;
-        else
-            pc_next = pc_reg;
-    end
-    
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            pc_reg <= 32'h0;
-        end else if (!stall || branch_taken || jump_taken) begin
-            pc_reg <= pc_next;
-        end
-    end
-    
-    // Memory interface
-    assign imem_addr = pc_reg;
-    assign imem_read = 1'b1;
-    
-    // Pipeline register
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n || flush) begin
-            if_id_pc <= '0;
-            if_id_pc4 <= '0;
-            if_id_inst <= 32'h00000013; // NOP
-            if_id_valid <= 1'b0;
-        end else if (!stall) begin
-            if_id_pc <= pc_reg;
-            if_id_pc4 <= pc_reg + 4;
-            if_id_inst <= imem_ready ? imem_read_data : 32'h00000013;
-            if_id_valid <= imem_ready;
-        end
-    end
-
-endmodule
-
-// Fixed Pipeline MEM Stage
-module pipeline_mem #(
-    parameter ADDR_WIDTH = 32,
-    parameter DATA_WIDTH = 32
-)(
-    input  logic                    clk,
-    input  logic                    rst_n,
-    input  logic                    stall,
-    
-    input  logic [DATA_WIDTH-1:0]   ex_mem_alu_result,
-    input  logic [DATA_WIDTH-1:0]   ex_mem_rs2_data,
-    input  logic [4:0]              ex_mem_rd,
-    input  logic                    ex_mem_mem_read,
-    input  logic                    ex_mem_mem_write,
-    input  logic                    ex_mem_reg_write,
-    input  logic                    ex_mem_valid,
-    
-    output logic [ADDR_WIDTH-1:0]   dmem_addr,
-    output logic [DATA_WIDTH-1:0]   dmem_write_data,
-    output logic                    dmem_read,
-    output logic                    dmem_write,
-    input  logic [DATA_WIDTH-1:0]   dmem_read_data,
-    input  logic                    dmem_ready,
-    
-    output logic [DATA_WIDTH-1:0]   mem_wb_alu_result,
-    output logic [DATA_WIDTH-1:0]   mem_wb_mem_data,
-    output logic [4:0]              mem_wb_rd,
-    output logic                    mem_wb_reg_write,
-    output logic                    mem_wb_mem_to_reg,
-    output logic                    mem_wb_valid
-);
-
-    // Memory interface
-    assign dmem_addr = ex_mem_alu_result;
-    assign dmem_write_data = ex_mem_rs2_data;
-    assign dmem_read = ex_mem_mem_read && ex_mem_valid;
-    assign dmem_write = ex_mem_mem_write && ex_mem_valid;
-    
-    // Pipeline register
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            mem_wb_alu_result <= '0;
-            mem_wb_mem_data <= '0;
-            mem_wb_rd <= '0;
-            mem_wb_reg_write <= '0;
-            mem_wb_mem_to_reg <= '0;
-            mem_wb_valid <= '0;
-        end else if (!stall) begin
-            mem_wb_alu_result <= ex_mem_alu_result;
-            mem_wb_mem_data <= dmem_read_data;
-            mem_wb_rd <= ex_mem_rd;
-            mem_wb_reg_write <= ex_mem_reg_write;
-            mem_wb_mem_to_reg <= ex_mem_mem_read;
-            mem_wb_valid <= ex_mem_valid;
-        end
-    end
-
-endmodule
-
-// Add missing modules
-module hazard_detection_unit #(
-    parameter REG_ADDR_WIDTH = 5
-)(
-    input  logic                        id_ex_mem_read,
-    input  logic [REG_ADDR_WIDTH-1:0]  id_ex_rd,
-    input  logic [REG_ADDR_WIDTH-1:0]  if_id_rs1,
-    input  logic [REG_ADDR_WIDTH-1:0]  if_id_rs2,
-    input  logic                        branch_taken,
-    input  logic                        jump_taken,
-    input  logic                        cp_stall,
-    
-    output logic                        stall_if,
-    output logic                        stall_id,
-    output logic                        stall_ex,
-    output logic                        stall_mem,
-    output logic                        flush_if,
-    output logic                        flush_id,
-    output logic                        flush_ex,
-    output logic                        load_use_hazard,
-    output logic                        control_hazard
-);
-
-    // Load-use hazard detection
-    always_comb begin
-        load_use_hazard = id_ex_mem_read && 
-                         ((id_ex_rd == if_id_rs1 && if_id_rs1 != 0) ||
-                          (id_ex_rd == if_id_rs2 && if_id_rs2 != 0));
+        // Load-use hazard
+        load_use_hazard = ex_mem_read && 
+                         ((ex_rd == id_rs1 && id_rs1 != 0) ||
+                          (ex_rd == id_rs2 && id_rs2 != 0));
         
+        // Control hazard
         control_hazard = branch_taken || jump_taken;
         
         // Stall logic
-        stall_if = load_use_hazard || cp_stall;
-        stall_id = load_use_hazard || cp_stall;
-        stall_ex = cp_stall;
-        stall_mem = cp_stall;
-        
-        // Flush logic
-        flush_if = control_hazard;
-        flush_id = control_hazard;
-        flush_ex = control_hazard || load_use_hazard;
-    end
-
-endmodule
-
-module forwarding_unit #(
-    parameter REG_ADDR_WIDTH = 5
-)(
-    input  logic [REG_ADDR_WIDTH-1:0]  id_ex_rs1,
-    input  logic [REG_ADDR_WIDTH-1:0]  id_ex_rs2,
-    input  logic [REG_ADDR_WIDTH-1:0]  ex_mem_rd,
-    input  logic                        ex_mem_reg_write,
-    input  logic [REG_ADDR_WIDTH-1:0]  mem_wb_rd,
-    input  logic                        mem_wb_reg_write,
-    
-    output logic [1:0]                  forward_a,
-    output logic [1:0]                  forward_b
-);
-
-    always_comb begin
-        // Forward A logic
-        if (ex_mem_reg_write && ex_mem_rd != 0 && ex_mem_rd == id_ex_rs1)
-            forward_a = 2'b10; // Forward from EX/MEM
-        else if (mem_wb_reg_write && mem_wb_rd != 0 && mem_wb_rd == id_ex_rs1)
-            forward_a = 2'b01; // Forward from MEM/WB
-        else
-            forward_a = 2'b00; // No forwarding
-        
-        // Forward B logic
-        if (ex_mem_reg_write && ex_mem_rd != 0 && ex_mem_rd == id_ex_rs2)
-            forward_b = 2'b10; // Forward from EX/MEM
-        else if (mem_wb_reg_write && mem_wb_rd != 0 && mem_wb_rd == id_ex_rs2)
-            forward_b = 2'b01; // Forward from MEM/WB
-        else
-            forward_b = 2'b00; // No forwarding
+        stall = load_use_hazard;
+        flush = control_hazard;
     end
 
 endmodule

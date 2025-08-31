@@ -1,6 +1,6 @@
 module _interconnect #(
-    parameter ADDR_WIDTH = 64,
-    parameter DATA_WIDTH = 64,
+    parameter ADDR_WIDTH = 32,  // Fixed to 32-bit for Red Pitaya
+    parameter DATA_WIDTH = 32,  // Fixed to 32-bit for Red Pitaya
     parameter NUM_MASTERS = 2,  // CPU, GPU
     parameter NUM_SLAVES = 4    // Main Memory, GPU Memory, Peripherals, Config
 )(
@@ -12,7 +12,7 @@ module _interconnect #(
     input  logic [NUM_MASTERS-1:0][ADDR_WIDTH-1:0] master_addr,
     input  logic [NUM_MASTERS-1:0][DATA_WIDTH-1:0] master_wdata,
     input  logic [NUM_MASTERS-1:0]                master_we,
-    input  logic [NUM_MASTERS-1:0][7:0]           master_be,     // Byte enable
+    input  logic [NUM_MASTERS-1:0][3:0]           master_be,     // Byte enable - 4 bytes for 32-bit
     output logic [NUM_MASTERS-1:0][DATA_WIDTH-1:0] master_rdata,
     output logic [NUM_MASTERS-1:0]                master_ready,
     
@@ -21,20 +21,20 @@ module _interconnect #(
     output logic [NUM_SLAVES-1:0][ADDR_WIDTH-1:0] slave_addr,
     output logic [NUM_SLAVES-1:0][DATA_WIDTH-1:0] slave_wdata,
     output logic [NUM_SLAVES-1:0]                 slave_we,
-    output logic [NUM_SLAVES-1:0][7:0]            slave_be,
+    output logic [NUM_SLAVES-1:0][3:0]            slave_be,
     input  logic [NUM_SLAVES-1:0][DATA_WIDTH-1:0] slave_rdata,
     input  logic [NUM_SLAVES-1:0]                 slave_ready
 );
 
-    // Address map
-    localparam logic [ADDR_WIDTH-1:0] MAIN_MEM_BASE   = 64'h0000_0000_0000_0000;
-    localparam logic [ADDR_WIDTH-1:0] MAIN_MEM_SIZE   = 64'h0000_0000_8000_0000; // 2GB
-    localparam logic [ADDR_WIDTH-1:0] GPU_MEM_BASE    = 64'h0000_0000_8000_0000;
-    localparam logic [ADDR_WIDTH-1:0] GPU_MEM_SIZE    = 64'h0000_0000_4000_0000; // 1GB
-    localparam logic [ADDR_WIDTH-1:0] PERIPH_BASE     = 64'h0000_0000_C000_0000;
-    localparam logic [ADDR_WIDTH-1:0] PERIPH_SIZE     = 64'h0000_0000_1000_0000; // 256MB
-    localparam logic [ADDR_WIDTH-1:0] CONFIG_BASE     = 64'h0000_0000_F000_0000;
-    localparam logic [ADDR_WIDTH-1:0] CONFIG_SIZE     = 64'h0000_0000_1000_0000; // 256MB
+    // Address map for 32-bit addressing
+    localparam logic [ADDR_WIDTH-1:0] MAIN_MEM_BASE   = 32'h0000_0000;
+    localparam logic [ADDR_WIDTH-1:0] MAIN_MEM_SIZE   = 32'h0800_0000; // 128MB
+    localparam logic [ADDR_WIDTH-1:0] GPU_MEM_BASE    = 32'h0800_0000;
+    localparam logic [ADDR_WIDTH-1:0] GPU_MEM_SIZE    = 32'h0400_0000; // 64MB
+    localparam logic [ADDR_WIDTH-1:0] PERIPH_BASE     = 32'h0C00_0000;
+    localparam logic [ADDR_WIDTH-1:0] PERIPH_SIZE     = 32'h0100_0000; // 16MB
+    localparam logic [ADDR_WIDTH-1:0] CONFIG_BASE     = 32'h0F00_0000;
+    localparam logic [ADDR_WIDTH-1:0] CONFIG_SIZE     = 32'h0100_0000; // 16MB
     
     // Arbitration logic
     logic [NUM_MASTERS-1:0] grant;
@@ -49,7 +49,7 @@ module _interconnect #(
     logic [ADDR_WIDTH-1:0] addr_reg;
     logic [DATA_WIDTH-1:0] wdata_reg;
     logic we_reg;
-    logic [7:0] be_reg;
+    logic [3:0] be_reg;  // Fixed to 4 bytes
     logic [$clog2(NUM_MASTERS)-1:0] master_id_reg;
     logic req_valid_reg;
     
