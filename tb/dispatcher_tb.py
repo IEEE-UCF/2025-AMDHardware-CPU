@@ -3,986 +3,684 @@ from cocotb.triggers import Timer, RisingEdge, ClockCycles
 from cocotb.clock import Clock
 from dataclasses import dataclass
 from enum import Enum
-from typing import Tuple
+import random
 
 """
-RISC-V RV32I ISA Dispatcher Testbench
+RISC-V Dispatcher Testbench for Coprocessor Interface
 
-This testbench validates the instruction dispatcher module based on the 
-RISC-V RV32I ISA specification. The dispatcher is responsible for:
-- Decoding instructions and determining execution units
-- Managing instruction issue to appropriate functional units
-- Handling data dependencies and hazards
-- Coordinating with coprocessors and accelerators
+This testbench validates the dispatcher module which routes instructions
+to coprocessors based on opcode detection.
 
-Testing focuses on ISA compliance without implementation details.
+The dispatcher recognizes:
+- System instructions (CSR, etc.) -> CP0 (opcode 7'b1110011)
+- Floating point instructions -> CP1 (opcode 7'b1010011)
+- Custom instructions -> CP2 (opcode 7'b0001011)
 """
 
 
 class RV32IOpcode(Enum):
-    """RISC-V RV32I Base Integer Instruction Set Opcodes"""
+    """RISC-V opcodes relevant to the dispatcher"""
 
-    LUI = 0b0110111  # Load Upper Immediate
-    AUIPC = 0b0010111  # Add Upper Immediate to PC
-    JAL = 0b1101111  # Jump and Link
-    JALR = 0b1100111  # Jump and Link Register
-    BRANCH = 0b1100011  # Branch instructions
-    LOAD = 0b0000011  # Load instructions
-    STORE = 0b0100011  # Store instructions
-    OP_IMM = 0b0010011  # Integer Register-Immediate operations
-    OP = 0b0110011  # Integer Register-Register operations
-    FENCE = 0b0001111  # Memory ordering
-    SYSTEM = 0b1110011  # System instructions
-
-
-class ExecutionUnit(Enum):
-    """Execution units that instructions can be dispatched to"""
-
-    ALU = "ALU"  # Arithmetic Logic Unit
-    BRANCH = "BRANCH"  # Branch Unit
-    LOAD_STORE = "LSU"  # Load/Store Unit
-    MULTIPLY = "MUL"  # Multiply/Divide Unit
-    COPROCESSOR = "COPROC"  # Coprocessor/System Unit
-    NONE = "NONE"  # No dispatch needed
+    SYSTEM = 0b1110011  # System instructions (CSR, etc.) -> CP0
+    FLOAT = 0b1010011  # Floating point instructions -> CP1
+    CUSTOM = 0b0001011  # Custom instructions -> CP2
+    # Standard opcodes that don't go to coprocessors
+    LUI = 0b0110111
+    AUIPC = 0b0010111
+    JAL = 0b1101111
+    JALR = 0b1100111
+    BRANCH = 0b1100011
+    LOAD = 0b0000011
+    STORE = 0b0100011
+    OP_IMM = 0b0010011
+    OP = 0b0110011
 
 
-class InstructionFormat(Enum):
-    """RISC-V instruction formats"""
+class CoprocessorSelect(Enum):
+    """Coprocessor selection values"""
 
-    R_TYPE = "R"  # Register-Register
-    I_TYPE = "I"  # Immediate
-    S_TYPE = "S"  # Store
-    B_TYPE = "B"  # Branch
-    U_TYPE = "U"  # Upper Immediate
-    J_TYPE = "J"  # Jump
+    CP0 = 0b00  # System coprocessor
+    CP1 = 0b01  # Floating point coprocessor
+    CP2 = 0b10  # Custom coprocessor
+    NONE = 0b11  # No coprocessor
 
 
 @dataclass
-class DecodedInstruction:
-    """Decoded RISC-V instruction information"""
+class Instruction:
+    """RISC-V instruction representation"""
 
     raw: int
-    opcode: RV32IOpcode
-    format: InstructionFormat
+    opcode: int
     rd: int
     rs1: int
     rs2: int
     funct3: int
     funct7: int
-    imm: int
-    execution_unit: ExecutionUnit
-    is_valid: bool
-    uses_rs1: bool
-    uses_rs2: bool
-    writes_rd: bool
 
+    @classmethod
+    def create(
+        cls,
+        opcode: int,
+        rd: int = 0,
+        rs1: int = 0,
+        rs2: int = 0,
+        funct3: int = 0,
+        funct7: int = 0,
+        imm: int = 0,
+    ):
+        """Create an instruction from fields"""
+        if opcode in [RV32IOpcode.SYSTEM.value, RV32IOpcode.FLOAT.value]:
+            # I-type format for system/float instructions
+            raw = (
+                ((imm & 0xFFF) << 20)
+                | (rs1 << 15)
+                | (funct3 << 12)
+                | (rd << 7)
+                | opcode
+            )
+        elif opcode == RV32IOpcode.CUSTOM.value:
+            # R-type format for custom instructions
+            raw = (
+                (funct7 << 25)
+                | (rs2 << 20)
+                | (rs1 << 15)
+                | (funct3 << 12)
+                | (rd << 7)
+                | opcode
+            )
+        else:
+            # Standard R-type format
+            raw = (
+                (funct7 << 25)
+                | (rs2 << 20)
+                | (rs1 << 15)
+                | (funct3 << 12)
+                | (rd << 7)
+                | opcode
+            )
 
-class RV32IDecoder:
-    """RISC-V RV32I instruction decoder based on ISA specification"""
-
-    @staticmethod
-    def decode(instruction: int) -> DecodedInstruction:
-        """Decode a 32-bit RISC-V instruction"""
-        # Extract basic fields
-        opcode_bits = instruction & 0x7F
-        rd = (instruction >> 7) & 0x1F
-        funct3 = (instruction >> 12) & 0x7
-        rs1 = (instruction >> 15) & 0x1F
-        rs2 = (instruction >> 20) & 0x1F
-        funct7 = (instruction >> 25) & 0x7F
-
-        # Initialize decoded instruction
-        decoded = DecodedInstruction(
-            raw=instruction,
-            opcode=None,
-            format=None,
+        return cls(
+            raw=raw,
+            opcode=opcode,
             rd=rd,
             rs1=rs1,
             rs2=rs2,
             funct3=funct3,
             funct7=funct7,
-            imm=0,
-            execution_unit=ExecutionUnit.NONE,
-            is_valid=False,
-            uses_rs1=False,
-            uses_rs2=False,
-            writes_rd=False,
         )
 
-        # Decode based on opcode
-        try:
-            if opcode_bits == RV32IOpcode.LUI.value:
-                decoded.opcode = RV32IOpcode.LUI
-                decoded.format = InstructionFormat.U_TYPE
-                decoded.imm = instruction & 0xFFFFF000
-                decoded.execution_unit = ExecutionUnit.ALU
-                decoded.writes_rd = True
-                decoded.is_valid = True
 
-            elif opcode_bits == RV32IOpcode.AUIPC.value:
-                decoded.opcode = RV32IOpcode.AUIPC
-                decoded.format = InstructionFormat.U_TYPE
-                decoded.imm = instruction & 0xFFFFF000
-                decoded.execution_unit = ExecutionUnit.ALU
-                decoded.writes_rd = True
-                decoded.is_valid = True
+class DispatcherDriver:
+    """Driver for the dispatcher module"""
 
-            elif opcode_bits == RV32IOpcode.JAL.value:
-                decoded.opcode = RV32IOpcode.JAL
-                decoded.format = InstructionFormat.J_TYPE
-                decoded.imm = RV32IDecoder._extract_j_immediate(instruction)
-                decoded.execution_unit = ExecutionUnit.BRANCH
-                decoded.writes_rd = True
-                decoded.is_valid = True
+    def __init__(self, dut):
+        self.dut = dut
+        self.dut.inst_valid.value = 0
+        self.dut.instruction.value = 0
+        self.dut.rs1_data.value = 0
+        self.dut.rs2_data.value = 0
+        self.dut.pc.value = 0
+        self.dut.pipeline_stall.value = 0
+        self.dut.cp_ready.value = 1  # Default: coprocessor ready
+        self.dut.cp_data_out.value = 0
+        self.dut.cp_exception.value = 0
 
-            elif opcode_bits == RV32IOpcode.JALR.value:
-                decoded.opcode = RV32IOpcode.JALR
-                decoded.format = InstructionFormat.I_TYPE
-                decoded.imm = RV32IDecoder._extract_i_immediate(instruction)
-                decoded.execution_unit = ExecutionUnit.BRANCH
-                decoded.uses_rs1 = True
-                decoded.writes_rd = True
-                decoded.is_valid = True
+    async def reset(self):
+        """Reset the DUT"""
+        self.dut.rst_n.value = 0
+        await ClockCycles(self.dut.clk, 2)
+        self.dut.rst_n.value = 1
+        await ClockCycles(self.dut.clk, 1)
+        self.dut._log.info("Reset complete")
 
-            elif opcode_bits == RV32IOpcode.BRANCH.value:
-                decoded.opcode = RV32IOpcode.BRANCH
-                decoded.format = InstructionFormat.B_TYPE
-                decoded.imm = RV32IDecoder._extract_b_immediate(instruction)
-                decoded.execution_unit = ExecutionUnit.BRANCH
-                decoded.uses_rs1 = True
-                decoded.uses_rs2 = True
-                decoded.is_valid = True
+    async def send_instruction(
+        self,
+        instruction: Instruction,
+        rs1_data: int = 0,
+        rs2_data: int = 0,
+        pc: int = 0,
+    ):
+        """Send an instruction to the dispatcher"""
+        self.dut.instruction.value = instruction.raw
+        self.dut.rs1_data.value = rs1_data
+        self.dut.rs2_data.value = rs2_data
+        self.dut.pc.value = pc
+        self.dut.inst_valid.value = 1
 
-            elif opcode_bits == RV32IOpcode.LOAD.value:
-                decoded.opcode = RV32IOpcode.LOAD
-                decoded.format = InstructionFormat.I_TYPE
-                decoded.imm = RV32IDecoder._extract_i_immediate(instruction)
-                decoded.execution_unit = ExecutionUnit.LOAD_STORE
-                decoded.uses_rs1 = True
-                decoded.writes_rd = True
-                decoded.is_valid = True
+        await RisingEdge(self.dut.clk)
+        await Timer(1, units="ns")  # Small delay for combinational logic
 
-            elif opcode_bits == RV32IOpcode.STORE.value:
-                decoded.opcode = RV32IOpcode.STORE
-                decoded.format = InstructionFormat.S_TYPE
-                decoded.imm = RV32IDecoder._extract_s_immediate(instruction)
-                decoded.execution_unit = ExecutionUnit.LOAD_STORE
-                decoded.uses_rs1 = True
-                decoded.uses_rs2 = True
-                decoded.is_valid = True
+        # Keep valid for one cycle
+        self.dut.inst_valid.value = 0
 
-            elif opcode_bits == RV32IOpcode.OP_IMM.value:
-                decoded.opcode = RV32IOpcode.OP_IMM
-                decoded.format = InstructionFormat.I_TYPE
-                decoded.imm = RV32IDecoder._extract_i_immediate(instruction)
-                decoded.execution_unit = ExecutionUnit.ALU
-                decoded.uses_rs1 = True
-                decoded.writes_rd = True
-                decoded.is_valid = True
+    def set_coprocessor_ready(self, ready: bool):
+        """Set coprocessor ready status"""
+        self.dut.cp_ready.value = 1 if ready else 0
 
-            elif opcode_bits == RV32IOpcode.OP.value:
-                decoded.opcode = RV32IOpcode.OP
-                decoded.format = InstructionFormat.R_TYPE
-                # Check for multiply/divide instructions (RV32M extension)
-                if funct7 == 0b0000001:  # MUL/DIV operations
-                    decoded.execution_unit = ExecutionUnit.MULTIPLY
-                else:
-                    decoded.execution_unit = ExecutionUnit.ALU
-                decoded.uses_rs1 = True
-                decoded.uses_rs2 = True
-                decoded.writes_rd = True
-                decoded.is_valid = True
+    def set_coprocessor_response(self, data: int, exception: bool = False):
+        """Set coprocessor response data"""
+        self.dut.cp_data_out.value = data
+        self.dut.cp_exception.value = 1 if exception else 0
 
-            elif opcode_bits == RV32IOpcode.FENCE.value:
-                decoded.opcode = RV32IOpcode.FENCE
-                decoded.format = InstructionFormat.I_TYPE
-                decoded.execution_unit = ExecutionUnit.LOAD_STORE
-                decoded.is_valid = True
-
-            elif opcode_bits == RV32IOpcode.SYSTEM.value:
-                decoded.opcode = RV32IOpcode.SYSTEM
-                decoded.format = InstructionFormat.I_TYPE
-                decoded.imm = RV32IDecoder._extract_i_immediate(instruction)
-                decoded.execution_unit = ExecutionUnit.COPROCESSOR
-                # CSR instructions use rs1 and write rd (except ECALL/EBREAK)
-                if funct3 != 0:  # Not ECALL/EBREAK
-                    decoded.uses_rs1 = True
-                    decoded.writes_rd = True
-                decoded.is_valid = True
-
-            else:
-                decoded.is_valid = False
-
-        except:
-            decoded.is_valid = False
-
-        return decoded
-
-    @staticmethod
-    def _extract_i_immediate(instruction: int) -> int:
-        """Extract I-type immediate with sign extension"""
-        imm = (instruction >> 20) & 0xFFF
-        if imm & 0x800:  # Sign extend
-            imm |= 0xFFFFF000
-        return imm
-
-    @staticmethod
-    def _extract_s_immediate(instruction: int) -> int:
-        """Extract S-type immediate with sign extension"""
-        imm = ((instruction >> 7) & 0x1F) | ((instruction >> 20) & 0xFE0)
-        if imm & 0x800:  # Sign extend
-            imm |= 0xFFFFF000
-        return imm
-
-    @staticmethod
-    def _extract_b_immediate(instruction: int) -> int:
-        """Extract B-type immediate with sign extension"""
-        imm = (
-            (((instruction >> 31) & 1) << 12)
-            | (((instruction >> 7) & 1) << 11)
-            | (((instruction >> 25) & 0x3F) << 5)
-            | (((instruction >> 8) & 0xF) << 1)
-        )
-        if imm & 0x1000:  # Sign extend
-            imm |= 0xFFFFE000
-        return imm
-
-    @staticmethod
-    def _extract_j_immediate(instruction: int) -> int:
-        """Extract J-type immediate with sign extension"""
-        imm = (
-            (((instruction >> 31) & 1) << 20)
-            | (((instruction >> 12) & 0xFF) << 12)
-            | (((instruction >> 20) & 1) << 11)
-            | (((instruction >> 21) & 0x3FF) << 1)
-        )
-        if imm & 0x100000:  # Sign extend
-            imm |= 0xFFF00000
-        return imm
+    def set_pipeline_stall(self, stall: bool):
+        """Set pipeline stall signal"""
+        self.dut.pipeline_stall.value = 1 if stall else 0
 
 
-class DispatchScoreboard:
-    """Track instruction dependencies and dispatch readiness"""
+class DispatcherMonitor:
+    """Monitor for the dispatcher module outputs"""
 
-    def __init__(self):
-        self.pending_writes = {}  # reg_num -> instruction_id
-        self.in_flight = {}  # instruction_id -> DecodedInstruction
-        self.next_id = 0
+    def __init__(self, dut):
+        self.dut = dut
 
-    def can_dispatch(self, decoded: DecodedInstruction) -> Tuple[bool, str]:
-        """Check if instruction can be dispatched"""
-        # Check RAW hazards
-        if decoded.uses_rs1 and decoded.rs1 in self.pending_writes:
-            return False, f"RAW hazard on x{decoded.rs1}"
-        if decoded.uses_rs2 and decoded.rs2 in self.pending_writes:
-            return False, f"RAW hazard on x{decoded.rs2}"
+    def is_coprocessor_instruction_detected(self) -> bool:
+        """Check if a coprocessor instruction was detected"""
+        return bool(int(self.dut.cp_instruction_detected.value))
 
-        # Check WAW hazards
-        if decoded.writes_rd and decoded.rd in self.pending_writes:
-            if decoded.rd != 0:  # x0 is always 0, no real hazard
-                return False, f"WAW hazard on x{decoded.rd}"
+    def get_coprocessor_select(self) -> CoprocessorSelect:
+        """Get which coprocessor was selected"""
+        val = int(self.dut.cp_select.value)
+        if val == 0b00:
+            return CoprocessorSelect.CP0
+        elif val == 0b01:
+            return CoprocessorSelect.CP1
+        elif val == 0b10:
+            return CoprocessorSelect.CP2
+        else:
+            return CoprocessorSelect.NONE
 
-        return True, "Ready to dispatch"
+    def is_cp_valid(self) -> bool:
+        """Check if coprocessor valid signal is asserted"""
+        return bool(int(self.dut.cp_valid.value))
 
-    def dispatch(self, decoded: DecodedInstruction) -> int:
-        """Record instruction dispatch"""
-        instr_id = self.next_id
-        self.next_id += 1
+    def get_cp_instruction(self) -> int:
+        """Get instruction sent to coprocessor"""
+        return int(self.dut.cp_instruction.value)
 
-        self.in_flight[instr_id] = decoded
-        if decoded.writes_rd and decoded.rd != 0:
-            self.pending_writes[decoded.rd] = instr_id
+    def get_cp_data_in(self) -> int:
+        """Get data sent to coprocessor"""
+        return int(self.dut.cp_data_in.value)
 
-        return instr_id
+    def is_stall_requested(self) -> bool:
+        """Check if coprocessor is requesting a stall"""
+        return bool(int(self.dut.cp_stall_request.value))
 
-    def complete(self, instr_id: int):
-        """Mark instruction as completed"""
-        if instr_id in self.in_flight:
-            decoded = self.in_flight[instr_id]
-            if decoded.writes_rd and decoded.rd in self.pending_writes:
-                if self.pending_writes[decoded.rd] == instr_id:
-                    del self.pending_writes[decoded.rd]
-            del self.in_flight[instr_id]
+    def is_result_valid(self) -> bool:
+        """Check if coprocessor result is valid"""
+        return bool(int(self.dut.cp_result_valid.value))
 
-    def reset(self):
-        """Clear all tracking state"""
-        self.pending_writes.clear()
-        self.in_flight.clear()
-        self.next_id = 0
+    def is_reg_write(self) -> bool:
+        """Check if register write is enabled"""
+        return bool(int(self.dut.cp_reg_write.value))
 
+    def get_reg_addr(self) -> int:
+        """Get register write address"""
+        return int(self.dut.cp_reg_addr.value)
 
-class RV32IInstructionGenerator:
-    """Generate valid RISC-V RV32I instructions for testing"""
-
-    @staticmethod
-    def generate_alu_immediate(rd: int, rs1: int, imm: int, funct3: int) -> int:
-        """Generate ALU immediate instruction"""
-        imm = imm & 0xFFF
-        return (
-            (imm << 20)
-            | (rs1 << 15)
-            | (funct3 << 12)
-            | (rd << 7)
-            | RV32IOpcode.OP_IMM.value
-        )
-
-    @staticmethod
-    def generate_alu_register(
-        rd: int, rs1: int, rs2: int, funct3: int, funct7: int
-    ) -> int:
-        """Generate ALU register-register instruction"""
-        return (
-            (funct7 << 25)
-            | (rs2 << 20)
-            | (rs1 << 15)
-            | (funct3 << 12)
-            | (rd << 7)
-            | RV32IOpcode.OP.value
-        )
-
-    @staticmethod
-    def generate_load(rd: int, rs1: int, imm: int, funct3: int) -> int:
-        """Generate load instruction"""
-        imm = imm & 0xFFF
-        return (
-            (imm << 20)
-            | (rs1 << 15)
-            | (funct3 << 12)
-            | (rd << 7)
-            | RV32IOpcode.LOAD.value
-        )
-
-    @staticmethod
-    def generate_store(rs1: int, rs2: int, imm: int, funct3: int) -> int:
-        """Generate store instruction"""
-        imm = imm & 0xFFF
-        imm_11_5 = (imm >> 5) & 0x7F
-        imm_4_0 = imm & 0x1F
-        return (
-            (imm_11_5 << 25)
-            | (rs2 << 20)
-            | (rs1 << 15)
-            | (funct3 << 12)
-            | (imm_4_0 << 7)
-            | RV32IOpcode.STORE.value
-        )
-
-    @staticmethod
-    def generate_branch(rs1: int, rs2: int, imm: int, funct3: int) -> int:
-        """Generate branch instruction"""
-        imm = imm & 0x1FFE  # Must be even
-        imm_12 = (imm >> 12) & 1
-        imm_10_5 = (imm >> 5) & 0x3F
-        imm_4_1 = (imm >> 1) & 0xF
-        imm_11 = (imm >> 11) & 1
-
-        return (
-            (imm_12 << 31)
-            | (imm_10_5 << 25)
-            | (rs2 << 20)
-            | (rs1 << 15)
-            | (funct3 << 12)
-            | (imm_4_1 << 8)
-            | (imm_11 << 7)
-            | RV32IOpcode.BRANCH.value
-        )
-
-    @staticmethod
-    def generate_jal(rd: int, imm: int) -> int:
-        """Generate JAL instruction"""
-        imm = imm & 0x1FFFFE  # Must be even
-        imm_20 = (imm >> 20) & 1
-        imm_10_1 = (imm >> 1) & 0x3FF
-        imm_11 = (imm >> 11) & 1
-        imm_19_12 = (imm >> 12) & 0xFF
-
-        return (
-            (imm_20 << 31)
-            | (imm_10_1 << 21)
-            | (imm_11 << 20)
-            | (imm_19_12 << 12)
-            | (rd << 7)
-            | RV32IOpcode.JAL.value
-        )
-
-    @staticmethod
-    def generate_jalr(rd: int, rs1: int, imm: int) -> int:
-        """Generate JALR instruction"""
-        imm = imm & 0xFFF
-        return (
-            (imm << 20) | (rs1 << 15) | (0 << 12) | (rd << 7) | RV32IOpcode.JALR.value
-        )
-
-    @staticmethod
-    def generate_lui(rd: int, imm: int) -> int:
-        """Generate LUI instruction"""
-        imm = imm & 0xFFFFF
-        return (imm << 12) | (rd << 7) | RV32IOpcode.LUI.value
-
-    @staticmethod
-    def generate_auipc(rd: int, imm: int) -> int:
-        """Generate AUIPC instruction"""
-        imm = imm & 0xFFFFF
-        return (imm << 12) | (rd << 7) | RV32IOpcode.AUIPC.value
+    def get_result(self) -> int:
+        """Get coprocessor result"""
+        return int(self.dut.cp_result.value)
 
 
 @cocotb.test()
-async def test_risc_v_dispatcher_basic_decode(dut):
-    """Test basic instruction decoding and dispatch decisions"""
+async def test_coprocessor_detection(dut):
+    """Test that the dispatcher correctly detects coprocessor instructions"""
 
-    dut._log.info("=== Testing RISC-V RV32I Dispatcher Basic Decode ===")
+    dut._log.info("=== Testing Coprocessor Instruction Detection ===")
 
     # Start clock
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
 
-    # Reset
-    dut.rst_n.value = 0
-    await RisingEdge(dut.clk)
-    await RisingEdge(dut.clk)
-    dut.rst_n.value = 1
-    await RisingEdge(dut.clk)
+    # Initialize driver and monitor
+    driver = DispatcherDriver(dut)
+    monitor = DispatcherMonitor(dut)
 
-    decoder = RV32IDecoder()
-    gen = RV32IInstructionGenerator()
+    await driver.reset()
 
-    test_instructions = [
-        # (instruction, description)
-        (gen.generate_alu_immediate(1, 2, 100, 0b000), "ADDI x1, x2, 100"),
-        (gen.generate_alu_register(3, 4, 5, 0b000, 0b0000000), "ADD x3, x4, x5"),
-        (gen.generate_load(6, 7, 8, 0b010), "LW x6, 8(x7)"),
-        (gen.generate_store(8, 9, 12, 0b010), "SW x9, 12(x8)"),
-        (gen.generate_branch(10, 11, 16, 0b000), "BEQ x10, x11, 16"),
-        (gen.generate_jal(12, 1024), "JAL x12, 1024"),
-        (gen.generate_jalr(13, 14, 100), "JALR x13, 100(x14)"),
-        (gen.generate_lui(15, 0x12345), "LUI x15, 0x12345"),
-        (gen.generate_auipc(16, 0x67890), "AUIPC x16, 0x67890"),
-    ]
-
-    passed_tests = 0
-    failed_tests = 0
-
-    for instruction, description in test_instructions:
-        dut._log.info(f"Testing: {description}")
-
-        # Decode instruction
-        decoded = decoder.decode(instruction)
-
-        # Apply to DUT
-        dut.instruction.value = instruction
-        dut.inst_valid.value = 1
-
-        await RisingEdge(dut.clk)
-        await Timer(1, units="ns")
-
-        # Check if dispatcher recognizes the instruction
-        if hasattr(dut, "dispatch_valid"):
-            if decoded.is_valid:
-                if int(dut.dispatch_valid.value) == 1:
-                    passed_tests += 1
-                    dut._log.info(f"  ✓ Instruction recognized for dispatch")
-                else:
-                    failed_tests += 1
-                    dut._log.error(f"  ✗ Valid instruction not recognized")
-            else:
-                if int(dut.dispatch_valid.value) == 0:
-                    passed_tests += 1
-                    dut._log.info(f"  ✓ Invalid instruction correctly rejected")
-                else:
-                    failed_tests += 1
-                    dut._log.error(f"  ✗ Invalid instruction incorrectly accepted")
-
-        # Check execution unit assignment (if available)
-        if hasattr(dut, "exec_unit"):
-            dut._log.info(f"  Execution unit: {decoded.execution_unit.value}")
-
-        # Clear for next test
-        dut.inst_valid.value = 0
-        await RisingEdge(dut.clk)
-
-    # Report results
-    total_tests = passed_tests + failed_tests
-    dut._log.info(f"=== Basic Decode Results ===")
-    dut._log.info(f"Passed: {passed_tests}/{total_tests}")
-
-    if failed_tests > 0:
-        assert False, f"Basic decode test failed {failed_tests} tests"
-
-
-@cocotb.test()
-async def test_risc_v_dispatcher_hazard_detection(dut):
-    """Test hazard detection and dispatch blocking"""
-
-    dut._log.info("=== Testing RISC-V Hazard Detection ===")
-
-    # Start clock
-    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
-
-    # Reset
-    dut.rst_n.value = 0
-    await RisingEdge(dut.clk)
-    dut.rst_n.value = 1
-    await RisingEdge(dut.clk)
-
-    gen = RV32IInstructionGenerator()
-    scoreboard = DispatchScoreboard()
-
-    # Test RAW hazard
-    dut._log.info("Testing RAW (Read-After-Write) hazard")
-
-    # Instruction 1: ADD x1, x2, x3 (writes x1)
-    instr1 = gen.generate_alu_register(1, 2, 3, 0b000, 0b0000000)
-
-    # Instruction 2: SUB x4, x1, x5 (reads x1 - RAW hazard)
-    instr2 = gen.generate_alu_register(4, 1, 5, 0b000, 0b0100000)
-
-    # Issue first instruction
-    dut.instruction.value = instr1
-    dut.inst_valid.value = 1
-
-    await RisingEdge(dut.clk)
-    await Timer(1, units="ns")
-
-    # Check if first instruction is dispatched
-    if hasattr(dut, "dispatch_valid") and hasattr(dut, "stall"):
-        if int(dut.dispatch_valid.value) == 1:
-            dut._log.info("  ✓ First instruction dispatched")
-
-            # Try to issue second instruction (should stall)
-            dut.instruction.value = instr2
-            await RisingEdge(dut.clk)
-            await Timer(1, units="ns")
-
-            if int(dut.stall.value) == 1:
-                dut._log.info("  ✓ RAW hazard detected - pipeline stalled")
-            else:
-                dut._log.warning("  ⚠ RAW hazard may not be detected")
-
-    # Clear
-    dut.inst_valid.value = 0
-    await RisingEdge(dut.clk)
-
-    # Test WAW hazard
-    dut._log.info("Testing WAW (Write-After-Write) hazard")
-
-    # Both instructions write to x6
-    instr3 = gen.generate_alu_immediate(6, 7, 100, 0b000)  # ADDI x6, x7, 100
-    instr4 = gen.generate_alu_immediate(6, 8, 200, 0b000)  # ADDI x6, x8, 200
-
-    dut.instruction.value = instr3
-    dut.inst_valid.value = 1
-
-    await RisingEdge(dut.clk)
-
-    dut.instruction.value = instr4
-
-    await RisingEdge(dut.clk)
-    await Timer(1, units="ns")
-
-    if hasattr(dut, "stall"):
-        dut._log.info(f"  WAW hazard handling: stall = {int(dut.stall.value)}")
-
-    dut._log.info("✓ Hazard detection test completed")
-
-
-@cocotb.test()
-async def test_risc_v_dispatcher_execution_units(dut):
-    """Test dispatch to different execution units"""
-
-    dut._log.info("=== Testing Dispatch to Execution Units ===")
-
-    # Start clock
-    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
-
-    # Reset
-    dut.rst_n.value = 0
-    await RisingEdge(dut.clk)
-    dut.rst_n.value = 1
-    await RisingEdge(dut.clk)
-
-    gen = RV32IInstructionGenerator()
-    decoder = RV32IDecoder()
-
-    # Test instructions for each execution unit
+    # Test cases: (instruction, expected_detected, expected_cp_select, description)
     test_cases = [
-        # ALU instructions
-        (gen.generate_alu_immediate(1, 2, 100, 0b000), ExecutionUnit.ALU, "ADDI (ALU)"),
         (
-            gen.generate_alu_register(3, 4, 5, 0b000, 0b0000000),
-            ExecutionUnit.ALU,
-            "ADD (ALU)",
+            Instruction.create(RV32IOpcode.SYSTEM.value, rd=1, rs1=2, funct3=0b001),
+            True,
+            CoprocessorSelect.CP0,
+            "CSR instruction -> CP0",
         ),
-        (gen.generate_lui(6, 0x12345), ExecutionUnit.ALU, "LUI (ALU)"),
-        # Branch unit instructions
-        (gen.generate_branch(7, 8, 100, 0b000), ExecutionUnit.BRANCH, "BEQ (Branch)"),
-        (gen.generate_jal(9, 1000), ExecutionUnit.BRANCH, "JAL (Branch)"),
-        (gen.generate_jalr(10, 11, 200), ExecutionUnit.BRANCH, "JALR (Branch)"),
-        # Load/Store unit instructions
-        (gen.generate_load(12, 13, 300, 0b010), ExecutionUnit.LOAD_STORE, "LW (LSU)"),
-        (gen.generate_store(14, 15, 400, 0b010), ExecutionUnit.LOAD_STORE, "SW (LSU)"),
-        # Multiply unit instructions (if RV32M extension)
         (
-            gen.generate_alu_register(16, 17, 18, 0b000, 0b0000001),
-            ExecutionUnit.MULTIPLY,
-            "MUL (Multiply)",
+            Instruction.create(RV32IOpcode.FLOAT.value, rd=3, rs1=4, rs2=5),
+            True,
+            CoprocessorSelect.CP1,
+            "Floating point -> CP1",
+        ),
+        (
+            Instruction.create(RV32IOpcode.CUSTOM.value, rd=6, rs1=7, rs2=8),
+            True,
+            CoprocessorSelect.CP2,
+            "Custom instruction -> CP2",
+        ),
+        (
+            Instruction.create(RV32IOpcode.OP_IMM.value, rd=9, rs1=10),
+            False,
+            CoprocessorSelect.CP0,
+            "ALU immediate -> No CP",
+        ),
+        (
+            Instruction.create(RV32IOpcode.LOAD.value, rd=11, rs1=12),
+            False,
+            CoprocessorSelect.CP0,
+            "Load instruction -> No CP",
         ),
     ]
 
-    for instruction, expected_unit, description in test_cases:
+    passed = 0
+    failed = 0
+
+    for instr, expected_detected, expected_select, description in test_cases:
         dut._log.info(f"Testing: {description}")
 
-        decoded = decoder.decode(instruction)
+        await driver.send_instruction(instr, rs1_data=0x12345678)
 
-        dut.instruction.value = instruction
-        dut.inst_valid.value = 1
+        # Check detection
+        detected = monitor.is_coprocessor_instruction_detected()
+        if detected == expected_detected:
+            dut._log.info(f"  ✓ Detection correct: {detected}")
+            passed += 1
+        else:
+            dut._log.error(
+                f"  ✗ Detection wrong: got {detected}, expected {expected_detected}"
+            )
+            failed += 1
 
-        await RisingEdge(dut.clk)
-        await Timer(1, units="ns")
-
-        # Check dispatch signals for different units
-        unit_signals = {
-            ExecutionUnit.ALU: "alu_dispatch",
-            ExecutionUnit.BRANCH: "branch_dispatch",
-            ExecutionUnit.LOAD_STORE: "lsu_dispatch",
-            ExecutionUnit.MULTIPLY: "mul_dispatch",
-            ExecutionUnit.COPROCESSOR: "coproc_dispatch",
-        }
-
-        # Check if the correct unit is selected
-        if expected_unit in unit_signals:
-            signal_name = unit_signals[expected_unit]
-            if hasattr(dut, signal_name):
-                if int(getattr(dut, signal_name).value) == 1:
-                    dut._log.info(f"  ✓ Correctly dispatched to {expected_unit.value}")
-                else:
-                    dut._log.warning(f"  ⚠ Not dispatched to {expected_unit.value}")
+        # Check selection (only if detected)
+        if expected_detected:
+            cp_select = monitor.get_coprocessor_select()
+            if cp_select == expected_select:
+                dut._log.info(f"  ✓ Selection correct: {cp_select.name}")
+                passed += 1
             else:
-                dut._log.info(f"  ○ {signal_name} signal not available")
+                dut._log.error(
+                    f"  ✗ Selection wrong: got {cp_select.name}, expected {expected_select.name}"
+                )
+                failed += 1
 
-        dut.inst_valid.value = 0
-        await RisingEdge(dut.clk)
+            # Check that instruction is passed through
+            cp_instr = monitor.get_cp_instruction()
+            if cp_instr == instr.raw:
+                dut._log.info(f"  ✓ Instruction passed correctly")
+                passed += 1
+            else:
+                dut._log.error(f"  ✗ Instruction mismatch")
+                failed += 1
 
-    dut._log.info("✓ Execution unit dispatch test completed")
+        await ClockCycles(dut.clk, 1)
+
+    dut._log.info(f"=== Results: {passed} passed, {failed} failed ===")
+    assert failed == 0, f"{failed} tests failed"
 
 
 @cocotb.test()
-async def test_risc_v_dispatcher_throughput(dut):
-    """Test dispatcher throughput with instruction sequences"""
+async def test_coprocessor_data_path(dut):
+    """Test data path from rs1 to coprocessor and result handling"""
 
-    dut._log.info("=== Testing Dispatcher Throughput ===")
+    dut._log.info("=== Testing Coprocessor Data Path ===")
 
-    # Start clock
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
 
-    # Reset
-    dut.rst_n.value = 0
-    await RisingEdge(dut.clk)
-    dut.rst_n.value = 1
-    await RisingEdge(dut.clk)
+    driver = DispatcherDriver(dut)
+    monitor = DispatcherMonitor(dut)
 
-    gen = RV32IInstructionGenerator()
+    await driver.reset()
 
-    # Generate a sequence of independent instructions (no hazards)
-    independent_sequence = []
-    for i in range(10):
-        rd = i + 1
-        rs1 = (i + 11) % 32
-        rs2 = (i + 21) % 32
-        instruction = gen.generate_alu_register(rd, rs1, rs2, i % 8, 0b0000000)
-        independent_sequence.append(instruction)
+    # Test data flow for CSR instruction
+    test_rs1_data = 0xDEADBEEF
+    test_cp_result = 0xCAFEBABE
+    test_rd = 15
 
-    dut._log.info("Testing independent instruction sequence")
+    dut._log.info("Testing CSR instruction data flow")
 
-    dispatched_count = 0
-    for i, instruction in enumerate(independent_sequence):
-        dut.instruction.value = instruction
-        dut.inst_valid.value = 1
+    # Set up coprocessor response
+    driver.set_coprocessor_response(test_cp_result)
 
-        await RisingEdge(dut.clk)
-        await Timer(1, units="ns")
-
-        if hasattr(dut, "dispatch_valid"):
-            if int(dut.dispatch_valid.value) == 1:
-                dispatched_count += 1
-
-        dut.inst_valid.value = 0
-        await Timer(1, units="ns")
-
-    dut._log.info(
-        f"Dispatched {dispatched_count}/{len(independent_sequence)} independent instructions"
+    # Send CSR instruction
+    csr_instr = Instruction.create(
+        RV32IOpcode.SYSTEM.value,
+        rd=test_rd,
+        rs1=5,
+        funct3=0b001,  # CSRRW
     )
 
-    # Generate a sequence with dependencies
-    dependent_sequence = []
-    for i in range(5):
-        # Each instruction depends on the previous one
-        rd = i + 1
-        rs1 = i  # Depends on previous instruction's result
-        rs2 = 20
-        instruction = gen.generate_alu_immediate(rd, rs1, 10, 0b000)
-        dependent_sequence.append(instruction)
+    await driver.send_instruction(csr_instr, rs1_data=test_rs1_data)
 
-    dut._log.info("Testing dependent instruction sequence")
+    # Check data sent to coprocessor
+    cp_data_in = monitor.get_cp_data_in()
+    if cp_data_in == test_rs1_data:
+        dut._log.info(f"  ✓ RS1 data correctly sent to CP: 0x{cp_data_in:08X}")
+    else:
+        dut._log.error(
+            f"  ✗ RS1 data wrong: got 0x{cp_data_in:08X}, expected 0x{test_rs1_data:08X}"
+        )
 
-    stall_cycles = 0
-    for i, instruction in enumerate(dependent_sequence):
-        dut.instruction.value = instruction
-        dut.inst_valid.value = 1
+    # Check result handling
+    if monitor.is_result_valid():
+        dut._log.info(f"  ✓ Result valid signal asserted")
 
-        await RisingEdge(dut.clk)
-        await Timer(1, units="ns")
-
-        if hasattr(dut, "stall"):
-            if int(dut.stall.value) == 1:
-                stall_cycles += 1
-                dut._log.info(f"  Instruction {i}: Stalled due to dependency")
-
-        # Wait for instruction to complete
-        for _ in range(3):
-            await RisingEdge(dut.clk)
-
-        dut.inst_valid.value = 0
-        await RisingEdge(dut.clk)
-
-    dut._log.info(f"Dependent sequence caused {stall_cycles} stall cycles")
-    dut._log.info("✓ Throughput test completed")
-
-
-@cocotb.test()
-async def test_risc_v_dispatcher_special_cases(dut):
-    """Test special cases and edge conditions"""
-
-    dut._log.info("=== Testing Dispatcher Special Cases ===")
-
-    # Start clock
-    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
-
-    # Reset
-    dut.rst_n.value = 0
-    await RisingEdge(dut.clk)
-    dut.rst_n.value = 1
-    await RisingEdge(dut.clk)
-
-    gen = RV32IInstructionGenerator()
-
-    # Test x0 register (always zero)
-    dut._log.info("Testing x0 register handling")
-
-    # Writing to x0 should be allowed but has no effect
-    instr_write_x0 = gen.generate_alu_immediate(0, 1, 100, 0b000)  # ADDI x0, x1, 100
-
-    dut.instruction.value = instr_write_x0
-    dut.inst_valid.value = 1
-
-    await RisingEdge(dut.clk)
-    await Timer(1, units="ns")
-
-    if hasattr(dut, "dispatch_valid"):
-        if int(dut.dispatch_valid.value) == 1:
-            dut._log.info(
-                "  ✓ Write to x0 dispatched (will be ignored by register file)"
+        result = monitor.get_result()
+        if result == test_cp_result:
+            dut._log.info(f"  ✓ Result correct: 0x{result:08X}")
+        else:
+            dut._log.error(
+                f"  ✗ Result wrong: got 0x{result:08X}, expected 0x{test_cp_result:08X}"
             )
 
-    dut.inst_valid.value = 0
-    await RisingEdge(dut.clk)
+        # Check register write signals
+        if monitor.is_reg_write():
+            dut._log.info(f"  ✓ Register write enabled")
 
-    # Test NOP instruction (ADDI x0, x0, 0)
-    dut._log.info("Testing NOP instruction")
+            reg_addr = monitor.get_reg_addr()
+            if reg_addr == test_rd:
+                dut._log.info(f"  ✓ Register address correct: x{reg_addr}")
+            else:
+                dut._log.error(
+                    f"  ✗ Register address wrong: got x{reg_addr}, expected x{test_rd}"
+                )
+    else:
+        dut._log.error(f"  ✗ Result valid not asserted")
 
-    nop_instruction = 0x00000013  # NOP
+    # Test with rd = x0 (should not write)
+    dut._log.info("Testing write to x0 (should be disabled)")
 
-    dut.instruction.value = nop_instruction
-    dut.inst_valid.value = 1
+    x0_instr = Instruction.create(
+        RV32IOpcode.SYSTEM.value,
+        rd=0,  # x0
+        rs1=5,
+        funct3=0b001,
+    )
 
-    await RisingEdge(dut.clk)
-    await Timer(1, units="ns")
+    await driver.send_instruction(x0_instr, rs1_data=0x11111111)
 
-    if hasattr(dut, "dispatch_valid"):
-        if int(dut.dispatch_valid.value) == 1:
-            dut._log.info("  ✓ NOP instruction dispatched")
-
-    dut.inst_valid.value = 0
-    await RisingEdge(dut.clk)
-
-    # Test invalid instruction
-    dut._log.info("Testing invalid instruction")
-
-    invalid_instruction = 0xFFFFFFFF  # Invalid opcode
-
-    dut.instruction.value = invalid_instruction
-    dut.inst_valid.value = 1
-
-    await RisingEdge(dut.clk)
-    await Timer(1, units="ns")
-
-    if hasattr(dut, "dispatch_valid"):
-        if int(dut.dispatch_valid.value) == 0:
-            dut._log.info("  ✓ Invalid instruction rejected")
-        else:
-            dut._log.warning("  ⚠ Invalid instruction may have been accepted")
-
-    if hasattr(dut, "illegal_inst"):
-        if int(dut.illegal_inst.value) == 1:
-            dut._log.info("  ✓ Illegal instruction exception raised")
-
-    dut.inst_valid.value = 0
-    await RisingEdge(dut.clk)
-
-    # Test FENCE instruction
-    dut._log.info("Testing FENCE instruction")
-
-    fence_instruction = 0x0000000F  # FENCE
-
-    dut.instruction.value = fence_instruction
-    dut.inst_valid.value = 1
-
-    await RisingEdge(dut.clk)
-    await Timer(1, units="ns")
-
-    if hasattr(dut, "dispatch_valid"):
-        if int(dut.dispatch_valid.value) == 1:
-            dut._log.info("  ✓ FENCE instruction dispatched")
-
-    if hasattr(dut, "fence_active"):
-        if int(dut.fence_active.value) == 1:
-            dut._log.info("  ✓ FENCE active signal asserted")
-
-    dut.inst_valid.value = 0
-    await RisingEdge(dut.clk)
-
-    # Test ECALL/EBREAK
-    dut._log.info("Testing ECALL and EBREAK")
-
-    ecall_instruction = 0x00000073  # ECALL
-    ebreak_instruction = 0x00100073  # EBREAK
-
-    for instr, name in [(ecall_instruction, "ECALL"), (ebreak_instruction, "EBREAK")]:
-        dut.instruction.value = instr
-        dut.inst_valid.value = 1
-
-        await RisingEdge(dut.clk)
-        await Timer(1, units="ns")
-
-        if hasattr(dut, "exception"):
-            if int(dut.exception.value) == 1:
-                dut._log.info(f"  ✓ {name} raised exception")
-
-        dut.inst_valid.value = 0
-        await RisingEdge(dut.clk)
-
-    dut._log.info("✓ Special cases test completed")
+    if not monitor.is_reg_write():
+        dut._log.info(f"  ✓ Register write correctly disabled for x0")
+    else:
+        dut._log.error(f"  ✗ Register write incorrectly enabled for x0")
 
 
 @cocotb.test()
-async def test_risc_v_dispatcher_pipeline_flush(dut):
-    """Test pipeline flush on branch misprediction"""
+async def test_coprocessor_stall(dut):
+    """Test stall generation when coprocessor is not ready"""
 
-    dut._log.info("=== Testing Pipeline Flush ===")
+    dut._log.info("=== Testing Coprocessor Stall Mechanism ===")
 
-    # Start clock
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
 
-    # Reset
-    dut.rst_n.value = 0
-    await RisingEdge(dut.clk)
-    dut.rst_n.value = 1
-    await RisingEdge(dut.clk)
+    driver = DispatcherDriver(dut)
+    monitor = DispatcherMonitor(dut)
 
-    gen = RV32IInstructionGenerator()
+    await driver.reset()
 
-    # Issue several instructions
+    # Test 1: Coprocessor ready - no stall
+    dut._log.info("Test 1: Coprocessor ready")
+    driver.set_coprocessor_ready(True)
+
+    fp_instr = Instruction.create(RV32IOpcode.FLOAT.value, rd=1, rs1=2)
+    await driver.send_instruction(fp_instr)
+
+    if not monitor.is_stall_requested():
+        dut._log.info(f"  ✓ No stall when coprocessor ready")
+    else:
+        dut._log.error(f"  ✗ Unexpected stall when coprocessor ready")
+
+    await ClockCycles(dut.clk, 2)
+
+    # Test 2: Coprocessor not ready - should stall
+    dut._log.info("Test 2: Coprocessor not ready")
+    driver.set_coprocessor_ready(False)
+
+    await driver.send_instruction(fp_instr)
+
+    if monitor.is_stall_requested():
+        dut._log.info(f"  ✓ Stall requested when coprocessor not ready")
+    else:
+        dut._log.error(f"  ✗ No stall when coprocessor not ready")
+
+    # Make coprocessor ready and check stall clears
+    await ClockCycles(dut.clk, 2)
+    driver.set_coprocessor_ready(True)
+    await ClockCycles(dut.clk, 1)
+
+    if not monitor.is_stall_requested():
+        dut._log.info(f"  ✓ Stall cleared when coprocessor becomes ready")
+    else:
+        dut._log.error(f"  ✗ Stall not cleared when coprocessor ready")
+
+    # Test 3: Non-coprocessor instruction - no stall regardless
+    dut._log.info("Test 3: Non-coprocessor instruction")
+    driver.set_coprocessor_ready(False)
+
+    alu_instr = Instruction.create(RV32IOpcode.OP_IMM.value, rd=3, rs1=4)
+    await driver.send_instruction(alu_instr)
+
+    if not monitor.is_stall_requested():
+        dut._log.info(f"  ✓ No stall for non-coprocessor instruction")
+    else:
+        dut._log.error(f"  ✗ Unexpected stall for non-coprocessor instruction")
+
+
+@cocotb.test()
+async def test_pipeline_stall_behavior(dut):
+    """Test behavior when pipeline stall is asserted"""
+
+    dut._log.info("=== Testing Pipeline Stall Behavior ===")
+
+    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
+
+    driver = DispatcherDriver(dut)
+    monitor = DispatcherMonitor(dut)
+
+    await driver.reset()
+
+    # Send instruction with pipeline stall active
+    dut._log.info("Testing with pipeline stall active")
+    driver.set_pipeline_stall(True)
+
+    csr_instr = Instruction.create(RV32IOpcode.SYSTEM.value, rd=1, rs1=2)
+    await driver.send_instruction(csr_instr)
+
+    # Should not detect coprocessor instruction when pipeline is stalled
+    if not monitor.is_coprocessor_instruction_detected():
+        dut._log.info(f"  ✓ Coprocessor detection inhibited during pipeline stall")
+    else:
+        dut._log.error(f"  ✗ Coprocessor incorrectly detected during pipeline stall")
+
+    # Clear pipeline stall and retry
+    dut._log.info("Testing with pipeline stall cleared")
+    driver.set_pipeline_stall(False)
+
+    await driver.send_instruction(csr_instr)
+
+    if monitor.is_coprocessor_instruction_detected():
+        dut._log.info(f"  ✓ Coprocessor detection works after pipeline stall cleared")
+    else:
+        dut._log.error(f"  ✗ Coprocessor not detected after pipeline stall cleared")
+
+
+@cocotb.test()
+async def test_coprocessor_exception(dut):
+    """Test exception handling from coprocessor"""
+
+    dut._log.info("=== Testing Coprocessor Exception Handling ===")
+
+    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
+
+    driver = DispatcherDriver(dut)
+    monitor = DispatcherMonitor(dut)
+
+    await driver.reset()
+
+    # Test normal operation (no exception)
+    dut._log.info("Test 1: Normal operation without exception")
+    driver.set_coprocessor_response(0x12345678, exception=False)
+
+    csr_instr = Instruction.create(RV32IOpcode.SYSTEM.value, rd=1, rs1=2)
+    await driver.send_instruction(csr_instr)
+
+    exception_out = int(dut.cp_exception_out.value)
+    if exception_out == 0:
+        dut._log.info(f"  ✓ No exception propagated in normal operation")
+    else:
+        dut._log.error(f"  ✗ Unexpected exception signal")
+
+    await ClockCycles(dut.clk, 2)
+
+    # Test with exception
+    dut._log.info("Test 2: Operation with exception")
+    driver.set_coprocessor_response(0x0, exception=True)
+
+    await driver.send_instruction(csr_instr)
+
+    exception_out = int(dut.cp_exception_out.value)
+    if exception_out == 1:
+        dut._log.info(f"  ✓ Exception correctly propagated")
+    else:
+        dut._log.error(f"  ✗ Exception not propagated")
+
+    # Clear exception
+    driver.set_coprocessor_response(0x0, exception=False)
+    await ClockCycles(dut.clk, 1)
+
+    exception_out = int(dut.cp_exception_out.value)
+    if exception_out == 0:
+        dut._log.info(f"  ✓ Exception signal cleared")
+    else:
+        dut._log.error(f"  ✗ Exception signal stuck")
+
+
+@cocotb.test()
+async def test_back_to_back_instructions(dut):
+    """Test back-to-back coprocessor instructions"""
+
+    dut._log.info("=== Testing Back-to-Back Coprocessor Instructions ===")
+
+    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
+
+    driver = DispatcherDriver(dut)
+    monitor = DispatcherMonitor(dut)
+
+    await driver.reset()
+    driver.set_coprocessor_ready(True)
+
+    # Create sequence of different coprocessor instructions
     instructions = [
-        gen.generate_alu_immediate(1, 2, 100, 0b000),
-        gen.generate_alu_immediate(3, 4, 200, 0b000),
-        gen.generate_alu_immediate(5, 6, 300, 0b000),
+        (
+            Instruction.create(RV32IOpcode.SYSTEM.value, rd=1, rs1=2),
+            CoprocessorSelect.CP0,
+            "System",
+        ),
+        (
+            Instruction.create(RV32IOpcode.FLOAT.value, rd=3, rs1=4),
+            CoprocessorSelect.CP1,
+            "Float",
+        ),
+        (
+            Instruction.create(RV32IOpcode.CUSTOM.value, rd=5, rs1=6),
+            CoprocessorSelect.CP2,
+            "Custom",
+        ),
+        (
+            Instruction.create(RV32IOpcode.SYSTEM.value, rd=7, rs1=8),
+            CoprocessorSelect.CP0,
+            "System",
+        ),
     ]
 
-    dut._log.info("Issuing instructions into pipeline")
+    dut._log.info("Sending back-to-back instructions")
 
-    for instruction in instructions:
-        dut.instruction.value = instruction
-        dut.inst_valid.value = 1
-        await RisingEdge(dut.clk)
-        dut.inst_valid.value = 0
+    for i, (instr, expected_cp, name) in enumerate(instructions):
+        driver.set_coprocessor_response(0x1000 + i)
+        await driver.send_instruction(instr, rs1_data=0x2000 + i)
 
-    # Simulate branch misprediction
-    dut._log.info("Simulating branch misprediction")
+        # Verify correct coprocessor selection
+        cp_select = monitor.get_coprocessor_select()
+        if cp_select == expected_cp:
+            dut._log.info(f"  ✓ Instruction {i} ({name}) -> {cp_select.name}")
+        else:
+            dut._log.error(f"  ✗ Instruction {i} ({name}) wrong CP: {cp_select.name}")
 
-    if hasattr(dut, "branch_mispredict"):
-        dut.branch_mispredict.value = 1
-        await RisingEdge(dut.clk)
-        dut.branch_mispredict.value = 0
-
-        # Check if pipeline is flushed
-        if hasattr(dut, "flush"):
-            if int(dut.flush.value) == 1:
-                dut._log.info("  ✓ Pipeline flush signal asserted")
-
-        # Wait for flush to complete
-        for _ in range(3):
-            await RisingEdge(dut.clk)
-
-        dut._log.info("  ✓ Pipeline flushed after misprediction")
-    else:
-        dut._log.info("  ○ Branch misprediction signal not available")
-
-    dut._log.info("✓ Pipeline flush test completed")
+        # Check result
+        if monitor.is_result_valid():
+            result = monitor.get_result()
+            if result == 0x1000 + i:
+                dut._log.info(f"    ✓ Result correct: 0x{result:04X}")
+            else:
+                dut._log.error(f"    ✗ Result wrong: 0x{result:04X}")
 
 
 @cocotb.test()
-async def test_risc_v_dispatcher_coprocessor_offload(dut):
-    """Test coprocessor instruction offloading"""
+async def test_random_instruction_stream(dut):
+    """Test with random instruction stream"""
 
-    dut._log.info("=== Testing Coprocessor Offload ===")
+    dut._log.info("=== Testing Random Instruction Stream ===")
 
-    # Start clock
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
 
-    # Reset
-    dut.rst_n.value = 0
-    await RisingEdge(dut.clk)
-    dut.rst_n.value = 1
-    await RisingEdge(dut.clk)
+    driver = DispatcherDriver(dut)
+    monitor = DispatcherMonitor(dut)
 
-    # Test CSR instruction dispatch
-    dut._log.info("Testing CSR instruction dispatch")
+    await driver.reset()
+    driver.set_coprocessor_ready(True)
 
-    # CSRRW x1, mstatus, x2
-    csr_instruction = (
-        (0x300 << 20) | (2 << 15) | (0b001 << 12) | (1 << 7) | RV32IOpcode.SYSTEM.value
+    # Generate random instruction stream
+    num_instructions = 20
+    cp_count = {
+        CoprocessorSelect.CP0: 0,
+        CoprocessorSelect.CP1: 0,
+        CoprocessorSelect.CP2: 0,
+    }
+    non_cp_count = 0
+
+    dut._log.info(f"Sending {num_instructions} random instructions")
+
+    for i in range(num_instructions):
+        # Randomly choose instruction type
+        opcodes = [
+            RV32IOpcode.SYSTEM.value,
+            RV32IOpcode.FLOAT.value,
+            RV32IOpcode.CUSTOM.value,
+            RV32IOpcode.OP_IMM.value,
+            RV32IOpcode.LOAD.value,
+            RV32IOpcode.STORE.value,
+            RV32IOpcode.OP.value,
+        ]
+
+        opcode = random.choice(opcodes)
+        rd = random.randint(0, 31)
+        rs1 = random.randint(0, 31)
+        rs2 = random.randint(0, 31)
+
+        instr = Instruction.create(opcode, rd=rd, rs1=rs1, rs2=rs2)
+
+        # Set random coprocessor response
+        driver.set_coprocessor_response(random.randint(0, 0xFFFFFFFF))
+
+        await driver.send_instruction(instr, rs1_data=random.randint(0, 0xFFFFFFFF))
+
+        # Track statistics
+        if monitor.is_coprocessor_instruction_detected():
+            cp_select = monitor.get_coprocessor_select()
+            cp_count[cp_select] += 1
+        else:
+            non_cp_count += 1
+
+    # Report statistics
+    dut._log.info("Instruction stream statistics:")
+    dut._log.info(f"  CP0 (System): {cp_count[CoprocessorSelect.CP0]}")
+    dut._log.info(f"  CP1 (Float): {cp_count[CoprocessorSelect.CP1]}")
+    dut._log.info(f"  CP2 (Custom): {cp_count[CoprocessorSelect.CP2]}")
+    dut._log.info(f"  Non-coprocessor: {non_cp_count}")
+    dut._log.info(f"  Total: {sum(cp_count.values()) + non_cp_count}")
+
+    # Verify total matches
+    total = sum(cp_count.values()) + non_cp_count
+    assert total == num_instructions, (
+        f"Instruction count mismatch: {total} != {num_instructions}"
     )
 
-    dut.instruction.value = csr_instruction
-    dut.inst_valid.value = 1
-
-    await RisingEdge(dut.clk)
-    await Timer(1, units="ns")
-
-    if hasattr(dut, "coproc_dispatch"):
-        if int(dut.coproc_dispatch.value) == 1:
-            dut._log.info("  ✓ CSR instruction dispatched to coprocessor")
-
-    dut.inst_valid.value = 0
-    await RisingEdge(dut.clk)
-
-    # Test custom instruction dispatch
-    dut._log.info("Testing custom instruction dispatch")
-
-    # Custom-0 instruction
-    custom_instruction = (
-        (0b0000000 << 25) | (5 << 20) | (4 << 15) | (0b000 << 12) | (3 << 7) | 0b0001011
-    )
-
-    dut.instruction.value = custom_instruction
-    dut.inst_valid.value = 1
-
-    await RisingEdge(dut.clk)
-    await Timer(1, units="ns")
-
-    if hasattr(dut, "custom_dispatch"):
-        if int(dut.custom_dispatch.value) == 1:
-            dut._log.info("  ✓ Custom instruction dispatched")
-
-    dut.inst_valid.value = 0
-    await RisingEdge(dut.clk)
-
-    dut._log.info("✓ Coprocessor offload test completed")
+    dut._log.info("✓ Random instruction stream test completed successfully")
