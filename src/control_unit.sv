@@ -111,9 +111,7 @@ module control_unit #(
                 OP_JAL: begin
                     reg_write = 1'b1;
                     jump      = 1'b1;
-                    alu_src   = 1'b1;
-                    imm_type  = IMM_U;
-                    alu_op    = ALU_ADD;
+                    imm_type  = IMM_U; // J-type uses U-type format
                 end
                 
                 OP_JALR: begin
