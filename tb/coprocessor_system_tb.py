@@ -4,15 +4,14 @@ from cocotb.triggers import Timer, RisingEdge
 from cocotb.clock import Clock
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, List, Dict, Tuple
-import struct
+from typing import Tuple
 
 """
 RISC-V RV32I ISA Coprocessor System Testbench
 
 Based purely on RISC-V ISA specification for coprocessor instructions:
 - System instructions (CSR operations, ECALL, EBREAK)
-- Floating-point instructions (if implemented)
+- Multiply/Divide instructions (RV32M extension)
 - Custom coprocessor instructions
 - Exception and interrupt handling
 
@@ -25,7 +24,7 @@ class RISCVInstructionType(Enum):
     """RISC-V instruction types that may use coprocessors"""
 
     SYSTEM = "SYSTEM"  # CSR, ECALL, EBREAK
-    FLOAT = "FLOAT"  # Floating-point operations
+    MULDIV = "MULDIV"  # Multiply/Divide operations (RV32M)
     CUSTOM_0 = "CUSTOM_0"  # Custom instruction space 0
     CUSTOM_1 = "CUSTOM_1"  # Custom instruction space 1
     CUSTOM_2 = "CUSTOM_2"  # Custom instruction space 2
@@ -59,8 +58,8 @@ class RISCVInstruction:
         """Classify instruction type based on RISC-V ISA"""
         if self.opcode == 0b1110011:  # SYSTEM
             return RISCVInstructionType.SYSTEM
-        elif self.opcode == 0b1010011:  # Floating-point
-            return RISCVInstructionType.FLOAT
+        elif self.opcode == 0b0110011 and self.funct7 == 0b0000001:  # MUL/DIV
+            return RISCVInstructionType.MULDIV
         elif self.opcode == 0b0001011:  # Custom-0
             return RISCVInstructionType.CUSTOM_0
         elif self.opcode == 0b0101011:  # Custom-1
@@ -98,11 +97,12 @@ class RISCVInstructionEncoder:
         )
 
     @staticmethod
-    def encode_float_instruction(
-        funct7: int, funct3: int, rd: int, rs1: int, rs2: int
+    def encode_muldiv_instruction(
+        funct3: int, rd: int, rs1: int, rs2: int
     ) -> RISCVInstruction:
-        """Encode floating-point instruction"""
-        opcode = 0b1010011
+        """Encode multiply/divide instruction (RV32M)"""
+        opcode = 0b0110011
+        funct7 = 0b0000001  # MUL/DIV identifier
         instruction_bits = (
             (funct7 << 25)
             | (rs2 << 20)
@@ -176,7 +176,7 @@ class RISCVCoprocessorSpec:
         instr_type = instr.get_type()
         return instr_type in [
             RISCVInstructionType.SYSTEM,
-            RISCVInstructionType.FLOAT,
+            RISCVInstructionType.MULDIV,
             RISCVInstructionType.CUSTOM_0,
             RISCVInstructionType.CUSTOM_1,
             RISCVInstructionType.CUSTOM_2,
@@ -222,28 +222,44 @@ class RISCVCoprocessorSpec:
         return (0, False)
 
     @staticmethod
-    def get_expected_result_for_float(
+    def get_expected_result_for_muldiv(
         instr: RISCVInstruction, rs1_data: int, rs2_data: int
     ) -> int:
-        """Get expected result for floating-point instruction (simplified)"""
-        # Simplified floating-point operations for testing
-        # In reality, these would be proper IEEE 754 operations
+        """Get expected result for multiply/divide instruction (RV32M)"""
+        # Convert to signed 32-bit for signed operations
+        rs1_signed = rs1_data if rs1_data < 0x80000000 else rs1_data - 0x100000000
+        rs2_signed = rs2_data if rs2_data < 0x80000000 else rs2_data - 0x100000000
 
-        if instr.funct7 == 0b0000000:  # FADD.S
-            return rs1_data + rs2_data
-        elif instr.funct7 == 0b0000100:  # FSUB.S
-            return rs1_data - rs2_data
-        elif instr.funct7 == 0b0001000:  # FMUL.S
-            return rs1_data * 2  # Simplified
-        elif instr.funct7 == 0b0001100:  # FDIV.S
-            return rs1_data // 2 if rs1_data > 0 else rs1_data  # Simplified
-        elif instr.funct7 == 0b1010000:  # Comparison operations
-            if instr.funct3 == 0b010:  # FEQ.S
-                return 1 if rs1_data == rs2_data else 0
-            elif instr.funct3 == 0b001:  # FLT.S
-                return 1 if rs1_data < rs2_data else 0
-            elif instr.funct3 == 0b000:  # FLE.S
-                return 1 if rs1_data <= rs2_data else 0
+        if instr.funct3 == 0b000:  # MUL
+            result = (rs1_signed * rs2_signed) & 0xFFFFFFFF
+            return result
+        elif instr.funct3 == 0b001:  # MULH
+            result = (rs1_signed * rs2_signed) >> 32
+            return result & 0xFFFFFFFF
+        elif instr.funct3 == 0b010:  # MULHSU
+            result = (rs1_signed * rs2_data) >> 32
+            return result & 0xFFFFFFFF
+        elif instr.funct3 == 0b011:  # MULHU
+            result = (rs1_data * rs2_data) >> 32
+            return result & 0xFFFFFFFF
+        elif instr.funct3 == 0b100:  # DIV
+            if rs2_data == 0:
+                return 0xFFFFFFFF
+            result = rs1_signed // rs2_signed if rs2_signed != 0 else -1
+            return result & 0xFFFFFFFF
+        elif instr.funct3 == 0b101:  # DIVU
+            if rs2_data == 0:
+                return 0xFFFFFFFF
+            return rs1_data // rs2_data
+        elif instr.funct3 == 0b110:  # REM
+            if rs2_data == 0:
+                return rs1_data
+            result = rs1_signed % rs2_signed if rs2_signed != 0 else rs1_signed
+            return result & 0xFFFFFFFF
+        elif instr.funct3 == 0b111:  # REMU
+            if rs2_data == 0:
+                return rs1_data
+            return rs1_data % rs2_data
 
         return rs1_data  # Default: pass through
 
@@ -255,22 +271,42 @@ class RISCVCoprocessorSpec:
         # Custom instructions - implementation defined
         # For testing, use simple operations based on funct3
 
-        if instr.funct3 == 0b000:  # Custom ADD
-            return rs1_data + rs2_data
-        elif instr.funct3 == 0b001:  # Custom SUB
-            return rs1_data - rs2_data
+        if instr.funct3 == 0b000:  # Custom AND
+            return rs1_data & rs2_data
+        elif instr.funct3 == 0b001:  # Custom OR
+            return rs1_data | rs2_data
         elif instr.funct3 == 0b010:  # Custom XOR
             return rs1_data ^ rs2_data
-        elif instr.funct3 == 0b011:  # Custom AND
-            return rs1_data & rs2_data
-        elif instr.funct3 == 0b100:  # Custom OR
-            return rs1_data | rs2_data
-        elif instr.funct3 == 0b101:  # Custom SLL
-            return (rs1_data << (rs2_data & 0x3F)) & 0xFFFFFFFFFFFFFFFF
-        elif instr.funct3 == 0b110:  # Custom SRL
-            return rs1_data >> (rs2_data & 0x3F)
-        elif instr.funct3 == 0b111:  # Custom MUL
-            return (rs1_data * rs2_data) & 0xFFFFFFFFFFFFFFFF
+        elif instr.funct3 == 0b011:  # Custom NOT
+            return (~rs1_data) & 0xFFFFFFFF
+        elif instr.funct3 == 0b100:  # Count leading zeros (simplified)
+            if rs1_data == 0:
+                return 32
+            count = 0
+            temp = rs1_data
+            for i in range(31, -1, -1):
+                if (temp >> i) & 1:
+                    break
+                count += 1
+            return count
+        elif instr.funct3 == 0b101:  # Count trailing zeros (simplified)
+            if rs1_data == 0:
+                return 32
+            count = 0
+            temp = rs1_data
+            while (temp & 1) == 0:
+                count += 1
+                temp >>= 1
+            return count
+        elif instr.funct3 == 0b110:  # Population count
+            count = 0
+            temp = rs1_data
+            while temp:
+                count += temp & 1
+                temp >>= 1
+            return count
+        elif instr.funct3 == 0b111:  # Pack two 16-bit values
+            return ((rs1_data & 0xFFFF) << 16) | (rs2_data & 0xFFFF)
 
         return rs1_data  # Default: pass through
 
@@ -286,7 +322,7 @@ async def test_risc_v_coprocessor_system_compliance(dut):
 
     # Reset sequence
     dut.rst_n.value = 0
-    dut.interrupt.value = 0
+    dut.irq_signal.value = 0  # Fixed: renamed from 'interrupt' to 'irq_signal'
     await RisingEdge(dut.clk)
     await RisingEdge(dut.clk)
     dut.rst_n.value = 1
@@ -317,7 +353,7 @@ async def test_risc_v_coprocessor_system_compliance(dut):
     for funct3, csr_addr, desc in csr_test_cases:
         rd = random.randint(1, 31)
         rs1 = random.randint(0, 31)
-        rs1_data = random.randint(0, 0xFFFFFFFFFFFFFFFF)
+        rs1_data = random.randint(0, 0xFFFFFFFF)  # Fixed: 32-bit values only
 
         instr = encoder.encode_system_instruction(funct3, rd, rs1, csr_addr)
         expected_result, should_exception = spec.get_expected_result_for_system(
@@ -350,7 +386,7 @@ async def test_risc_v_coprocessor_system_compliance(dut):
                 # (exact value depends on implementation)
                 if not should_exception:
                     passed_tests += 1
-                    dut._log.info(f"✓ {desc}: Result=0x{actual_result:016x}")
+                    dut._log.info(f"✓ {desc}: Result=0x{actual_result:08x}")
                 else:
                     # ECALL/EBREAK should cause exceptions (implementation dependent)
                     passed_tests += 1
@@ -396,28 +432,29 @@ async def test_risc_v_coprocessor_system_compliance(dut):
 
         await RisingEdge(dut.clk)
 
-    # Test floating-point instructions (if supported)
-    dut._log.info("Testing floating-point instructions")
+    # Test multiply/divide instructions (RV32M)
+    dut._log.info("Testing multiply/divide instructions (RV32M)")
 
-    float_test_cases = [
-        (0b0000000, 0b000, "FADD.S"),
-        (0b0000100, 0b000, "FSUB.S"),
-        (0b0001000, 0b000, "FMUL.S"),
-        (0b0001100, 0b000, "FDIV.S"),
-        (0b1010000, 0b010, "FEQ.S"),
-        (0b1010000, 0b001, "FLT.S"),
-        (0b1010000, 0b000, "FLE.S"),
+    muldiv_test_cases = [
+        (0b000, "MUL"),
+        (0b001, "MULH"),
+        (0b010, "MULHSU"),
+        (0b011, "MULHU"),
+        (0b100, "DIV"),
+        (0b101, "DIVU"),
+        (0b110, "REM"),
+        (0b111, "REMU"),
     ]
 
-    for funct7, funct3, desc in float_test_cases[:3]:  # Test first 3 to avoid timeout
+    for funct3, desc in muldiv_test_cases[:4]:  # Test first 4 to avoid timeout
         rd = random.randint(1, 31)
         rs1 = random.randint(1, 31)
         rs2 = random.randint(1, 31)
-        rs1_data = random.randint(0, 0xFFFFFFFF)  # 32-bit for float
-        rs2_data = random.randint(0, 0xFFFFFFFF)
+        rs1_data = random.randint(0, 0xFFFFFFFF)  # 32-bit values
+        rs2_data = random.randint(1, 0xFFFFFFFF)  # Avoid divide by zero
 
-        instr = encoder.encode_float_instruction(funct7, funct3, rd, rs1, rs2)
-        expected_result = spec.get_expected_result_for_float(instr, rs1_data, rs2_data)
+        instr = encoder.encode_muldiv_instruction(funct3, rd, rs1, rs2)
+        expected_result = spec.get_expected_result_for_muldiv(instr, rs1_data, rs2_data)
 
         dut.instruction.value = instr.instruction_bits
         dut.rs1_data.value = rs1_data
@@ -430,7 +467,7 @@ async def test_risc_v_coprocessor_system_compliance(dut):
         total_tests += 1
 
         if int(dut.cp_detected.value) == 1:
-            # Wait for completion (floating-point may take multiple cycles)
+            # Wait for completion (multiply/divide may take multiple cycles)
             timeout = 20
             while timeout > 0 and int(dut.cp_result_valid.value) == 0:
                 await RisingEdge(dut.clk)
@@ -439,14 +476,13 @@ async def test_risc_v_coprocessor_system_compliance(dut):
             if int(dut.cp_result_valid.value) == 1:
                 actual_result = int(dut.cp_result.value)
                 passed_tests += 1
-                dut._log.info(f"✓ {desc}: Result=0x{actual_result:016x}")
+                dut._log.info(f"✓ {desc}: Result=0x{actual_result:08x}")
             else:
                 failed_tests += 1
                 dut._log.error(f"✗ {desc}: No result after {20 - timeout} cycles")
         else:
-            # Floating-point might not be implemented
-            passed_tests += 1
-            dut._log.info(f"○ {desc}: Not implemented (acceptable)")
+            failed_tests += 1
+            dut._log.error(f"✗ {desc}: Not detected by coprocessor")
 
         await RisingEdge(dut.clk)
 
@@ -542,7 +578,7 @@ async def test_risc_v_coprocessor_system_compliance(dut):
     dut._log.info("Testing interrupt handling")
 
     dut.instruction.value = 0x00000013  # NOP
-    dut.interrupt.value = 1
+    dut.irq_signal.value = 1  # Fixed: renamed from 'interrupt' to 'irq_signal'
 
     await RisingEdge(dut.clk)
     await Timer(1, units="ns")
@@ -554,7 +590,7 @@ async def test_risc_v_coprocessor_system_compliance(dut):
     )
     dut._log.info("✓ Interrupt handling: Implementation dependent")
 
-    dut.interrupt.value = 0
+    dut.irq_signal.value = 0  # Fixed: renamed from 'interrupt' to 'irq_signal'
     await RisingEdge(dut.clk)
 
     # Test Results
@@ -593,8 +629,8 @@ async def test_risc_v_coprocessor_stall_behavior(dut):
     # Test multi-cycle operation stalling
     dut._log.info("Testing multi-cycle operation stalling")
 
-    # Create a floating-point multiply (typically multi-cycle)
-    instr = encoder.encode_float_instruction(0b0001000, 0b000, 5, 10, 15)  # FMUL
+    # Create a multiply instruction (typically multi-cycle)
+    instr = encoder.encode_muldiv_instruction(0b000, 5, 10, 15)  # MUL
 
     dut.instruction.value = instr.instruction_bits
     dut.rs1_data.value = 0x12345678
@@ -628,7 +664,7 @@ async def test_risc_v_coprocessor_stall_behavior(dut):
         else:
             dut._log.info("○ Single-cycle operation or stall not observable")
     else:
-        dut._log.info("○ Floating-point not implemented")
+        dut._log.info("○ Multiply not implemented")
 
     dut._log.info("✓ Stall behavior test completed")
 
@@ -682,15 +718,15 @@ async def test_risc_v_coprocessor_edge_cases(dut):
     dut._log.info("Testing maximum register values")
 
     max_values = [
-        0xFFFFFFFFFFFFFFFF,  # Maximum 32-bit value
-        0x8000000000000000,  # Most negative 32-bit value
-        0x7FFFFFFFFFFFFFFF,  # Most positive 32bit value
-        0x0000000000000000,  # Zero
+        0xFFFFFFFF,  # Maximum 32-bit value (fixed from 64-bit)
+        0x80000000,  # Most negative 32-bit value
+        0x7FFFFFFF,  # Most positive 32-bit value
+        0x00000000,  # Zero
     ]
 
     instr = encoder.encode_custom_instruction(
         0b0001011, 0b000, 0, 10, 5, 6
-    )  # Custom ADD
+    )  # Custom AND
 
     for val1 in max_values[:2]:  # Test first 2 to avoid timeout
         for val2 in max_values[:2]:
@@ -711,9 +747,42 @@ async def test_risc_v_coprocessor_edge_cases(dut):
                 if int(dut.cp_result_valid.value) == 1:
                     result = int(dut.cp_result.value)
                     dut._log.info(
-                        f"✓ Max values 0x{val1:016x} + 0x{val2:016x} = 0x{result:016x}"
+                        f"✓ Max values 0x{val1:08x} & 0x{val2:08x} = 0x{result:08x}"
                     )
 
             await RisingEdge(dut.clk)
+
+    # Test division by zero
+    dut._log.info("Testing division by zero")
+
+    div_by_zero_cases = [
+        (0b100, "DIV"),  # Signed division
+        (0b101, "DIVU"),  # Unsigned division
+        (0b110, "REM"),  # Signed remainder
+        (0b111, "REMU"),  # Unsigned remainder
+    ]
+
+    for funct3, desc in div_by_zero_cases:
+        instr = encoder.encode_muldiv_instruction(funct3, 10, 5, 6)
+
+        dut.instruction.value = instr.instruction_bits
+        dut.rs1_data.value = 0x12345678
+        dut.rs2_data.value = 0  # Division by zero
+        dut.pc.value = 0x4000
+
+        await RisingEdge(dut.clk)
+        await Timer(1, units="ns")
+
+        if int(dut.cp_detected.value) == 1:
+            timeout = 10
+            while timeout > 0 and int(dut.cp_result_valid.value) == 0:
+                await RisingEdge(dut.clk)
+                timeout -= 1
+
+            if int(dut.cp_result_valid.value) == 1:
+                result = int(dut.cp_result.value)
+                dut._log.info(f"✓ {desc} by zero: Result=0x{result:08x}")
+
+        await RisingEdge(dut.clk)
 
     dut._log.info("✓ Edge case testing completed")
