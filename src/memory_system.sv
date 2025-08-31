@@ -1,537 +1,282 @@
-module stage_if #(
-    parameter ADDR_WIDTH = 64, 
-    parameter INST_WIDTH = 32, 
-    parameter PC_TYPE_NUM = 4
-)(
-    input  logic                           clk,
-    input  logic                           reset,
-    input  logic                           stall,
-    input  logic                           inst_w_en,
-    input  logic [INST_WIDTH-1:0]          inst_w_in,
-    input  logic [$clog2(PC_TYPE_NUM)-1:0] pc_sel, // 0=Plus4, 1=Branch, 2=Jump, 3=Jump Register
-    input  logic [ADDR_WIDTH-1:0]          bra_addr,
-    input  logic [ADDR_WIDTH-1:0]          jal_addr,
-    input  logic [ADDR_WIDTH-1:0]          jar_addr,
-    output logic [ADDR_WIDTH-1:0]          pc,
-    output logic [ADDR_WIDTH-1:0]          pc4,
-    output logic [INST_WIDTH-1:0]          inst_word,
-    output logic                           inst_valid,
-    output logic                           inst_buffer_empty,
-    output logic                           inst_buffer_full
-);
-
-    logic [ADDR_WIDTH-1:0] pc_next;
-    logic [ADDR_WIDTH-1:0] pc_curr;
-    logic [ADDR_WIDTH-1:0] pc_next_options [0:PC_TYPE_NUM-1];
-
-    assign pc_next_options[0] = pc_curr + 4;
-    assign pc_next_options[1] = bra_addr;
-    assign pc_next_options[2] = jal_addr;
-    assign pc_next_options[3] = jar_addr;
-
-    // PC selection mux
-    mux_n #(
-        .INPUT_WIDTH(ADDR_WIDTH),
-        .INPUT_NUM(PC_TYPE_NUM)
-    ) pc_mux (
-        .data_in(pc_next_options), 
-        .sel(pc_sel),
-        .data_out(pc_next)
-    );
-
-    // PC register
-    reg_if #(
-        .ADDR_WIDTH(ADDR_WIDTH)
-    ) pc_reg (
-        .clk(clk),
-        .reset(reset),
-        .stall(stall),
-        .pc_next(pc_next),
-        .pc_reg(pc_curr)
-    );
-
-    // Instruction memory
-    memory_instruction #(
-        .INST_WIDTH(INST_WIDTH),
-        .X_WIDTH(4),
-        .Y_WIDTH(4)
-    ) instruction_memory (
-        .Clock(clk),
-        .WriteEnable(inst_w_en),
-        .X_addr(pc_curr[5:2]),
-        .Y_addr(pc_curr[9:6]),
-        .Data_in(inst_w_in),
-        .Data_out(inst_word)
-    );
-
-    assign inst_valid = (pc_sel == 2'b00);
-    assign pc = pc_curr;
-    assign pc4 = pc_next_options[0];
-    assign inst_buffer_empty = 1'b0;
-    assign inst_buffer_full = 1'b0;
-
-endmodule
-
-module stage_id #(
-    parameter ADDR_WIDTH = 64, 
-    parameter INST_WIDTH = 32, 
-    parameter REG_NUM = 32
-)(
-    input  logic                           clk,
-    input  logic                           reset,
-    input  logic                           interrupt,
-    input  logic                           stall,
-    input  logic                           w_en,
-    input  logic                           w_en_gpu,
-    input  logic                           has_imm,
-    input  logic                           has_rs1,
-    input  logic                           has_rs2,
-    input  logic                           has_rs3,
-    input  logic [1:0]                     imm_type,
-    input  logic [ADDR_WIDTH-1:0]          pc4,
-    input  logic [ADDR_WIDTH-1:0]          pc,
-    input  logic [ADDR_WIDTH-1:0]          w_result,
-    input  logic [ADDR_WIDTH-1:0]          w_result_gpu,
-    input  logic [ADDR_WIDTH-1:0]          ex_pro,
-    input  logic [ADDR_WIDTH-1:0]          mm_pro,
-    input  logic [ADDR_WIDTH-1:0]          mm_mem,
-    input  logic [INST_WIDTH-1:0]          inst_word,
-    input  logic [$clog2(REG_NUM)-1:0]     load_rd,
-    input  logic                           is_load,
-    input  logic [$clog2(REG_NUM)-1:0]     w_rd,
-    input  logic                           ex_wr_reg_en,
-    input  logic                           mm_wr_reg_en,
-    input  logic                           mm_is_load,
-    input  logic [$clog2(REG_NUM)-1:0]     ex_rd,
-    input  logic [$clog2(REG_NUM)-1:0]     mm_rd,
-    input  logic [$clog2(REG_NUM)-1:0]     w_rd_gpu,
-    input  logic [$clog2(REG_NUM)-1:0]     rs_gpu,
-    output logic                           is_equal,
-    output logic [ADDR_WIDTH-1:0]          read_out_gpu,
-    output logic [ADDR_WIDTH-1:0]          read_out_a,
-    output logic [ADDR_WIDTH-1:0]          read_out_b,
-    output logic [ADDR_WIDTH-1:0]          bra_addr,
-    output logic [ADDR_WIDTH-1:0]          jal_addr,
-    output logic [ADDR_WIDTH-1:0]          jar_addr
-);
-
-    logic                  inst_buffer_empty;
-    logic                  inst_buffer_full;
-    logic                  load_stall;
-    logic                  reg_stall;
-    logic [ADDR_WIDTH-1:0] d_pc;
-    logic [ADDR_WIDTH-1:0] d_pc4;
-    logic [ADDR_WIDTH-1:0] a_out;
-    logic [ADDR_WIDTH-1:0] b_out_options [0:1];
-    logic [ADDR_WIDTH-1:0] a_file_out;
-    logic [ADDR_WIDTH-1:0] b_file_out;
-    logic [INST_WIDTH-1:0] d_inst;
-
-    // Equality check for branches
-    equ #(
-        .DATA_WIDTH(ADDR_WIDTH)
-    ) rs_equality (
-        .data_a(a_out),
-        .data_b(b_out_options[0]),
-        .is_equal(is_equal)
-    );
-    
-    // Branch address calculation
-    branch_calc #(
-        .ADDR_WIDTH(ADDR_WIDTH),
-        .INST_WIDTH(INST_WIDTH)
-    ) branch_addrs (
-        .pc(pc),
-        .inst(d_inst),
-        .data_a(a_out),
-        .bra_addr(bra_addr),
-        .jal_addr(jal_addr),
-        .jalr_addr(jar_addr)
-    );
-
-    // Load-use hazard detection
-    stage_id_stall #(
-        .ADDR_WIDTH(ADDR_WIDTH),
-        .REG_NUM(REG_NUM)
-    ) load_stall_check (
-        .load_rd(load_rd),
-        .is_load(is_load),
-        .rs1_addr(d_inst[19:15]),
-        .rs2_addr(d_inst[24:20]),
-        .rs3_addr(d_inst[31:27]),
-        .has_rs1(has_rs1),
-        .has_rs2(has_rs2),
-        .has_rs3(has_rs3),
-        .stall(load_stall)
-    );
-
-    assign reg_stall = stall | load_stall;
-
-    // IF/ID pipeline register
-    reg_if_to_id #(
-        .ADDR_WIDTH(ADDR_WIDTH),
-        .INST_WIDTH(INST_WIDTH)
-    ) stage2 (
-        .clk(clk),
-        .reset(reset),
-        .stall(reg_stall),
-        .pc4(pc4),
-        .pc(pc),
-        .inst(inst_word),
-        .inst_buffer_empty(inst_buffer_empty),
-        .inst_buffer_full(inst_buffer_full),
-        .d_pc(d_pc),
-        .d_pc4(d_pc4),
-        .d_inst(d_inst)
-    );
-
-    // Register file
-    register_bank_list #(
-        .REG_NUM(REG_NUM),
-        .DATA_WIDTH(ADDR_WIDTH)
-    ) register_file (
-        .clk(clk),
-        .reset(reset),
-        .interrupt(interrupt),
-        .write_addr_cpu(w_rd),
-        .write_addr_gpu(w_rd_gpu),
-        .data_in_cpu(w_result),
-        .data_in_gpu(w_result_gpu),
-        .write_en_cpu(w_en),
-        .write_en_gpu(w_en_gpu),
-        .read_addr_a(d_inst[19:15]),
-        .read_addr_b(d_inst[24:20]),
-        .read_addr_gpu(rs_gpu),
-        .data_out_a(a_file_out),
-        .data_out_b(b_file_out),
-        .data_out_gpu(read_out_gpu)
-    );
-    
-    // Bypass logic for operand A
-    bypass_mux #(
-        .ADDR_WIDTH(ADDR_WIDTH),
-        .REG_NUM(REG_NUM)
-    ) a_bypass (
-        .ex_wr_reg_en(ex_wr_reg_en),
-        .mm_wr_reg_en(mm_wr_reg_en),
-        .mm_is_load(mm_is_load),
-        .file_out(a_file_out),
-        .ex_pro(ex_pro),
-        .mm_pro(mm_pro),
-        .mm_mem(mm_mem),
-        .file_out_rs(d_inst[19:15]),
-        .ex_rd(ex_rd),
-        .mm_rd(mm_rd),
-        .bypass_out(a_out)
-    );
-    
-    // Bypass logic for operand B
-    bypass_mux #(
-        .ADDR_WIDTH(ADDR_WIDTH),
-        .REG_NUM(REG_NUM)
-    ) b_bypass (
-        .ex_wr_reg_en(ex_wr_reg_en),
-        .mm_wr_reg_en(mm_wr_reg_en),
-        .mm_is_load(mm_is_load),
-        .file_out(b_file_out),
-        .ex_pro(ex_pro),
-        .mm_pro(mm_pro),
-        .mm_mem(mm_mem),
-        .file_out_rs(d_inst[24:20]),
-        .ex_rd(ex_rd),
-        .mm_rd(mm_rd),
-        .bypass_out(b_out_options[0])
-    );
-
-    // Immediate generation
-    imme #(
-        .DATA_WIDTH(ADDR_WIDTH),
-        .INST_WIDTH(INST_WIDTH),
-        .IMM_TYPE_NUM(4)
-    ) gen_imme (
-        .inst(d_inst),
-        .imm_type(imm_type),
-        .imm(b_out_options[1])
-    );
-    
-    // Select between register and immediate
-    mux_n #(
-        .INPUT_WIDTH(ADDR_WIDTH),
-        .INPUT_NUM(2)
-    ) b_mux (
-        .data_in(b_out_options),
-        .sel(has_imm),
-        .data_out(read_out_b)
-    );
-
-    assign read_out_a = a_out;
-
-endmodule
-
-module stage_id_stall #(
-    parameter ADDR_WIDTH = 64, 
-    parameter REG_NUM = 32
-)(
-    input  logic                       is_load,
-    input  logic                       has_rs1,
-    input  logic                       has_rs2,
-    input  logic                       has_rs3,    
-    input  logic [$clog2(REG_NUM)-1:0] rs1_addr,
-    input  logic [$clog2(REG_NUM)-1:0] rs2_addr,
-    input  logic [$clog2(REG_NUM)-1:0] rs3_addr,
-    input  logic [$clog2(REG_NUM)-1:0] load_rd,
-    output logic                       stall 
-);
-    assign stall = is_load && ((has_rs1 && (rs1_addr == load_rd)) 
-                            || (has_rs2 && (rs2_addr == load_rd)) 
-                            || (has_rs3 && (rs3_addr == load_rd)));
-endmodule
-
-module pl_stage_exe #(
-    parameter DATA_WIDTH = 64
-)(
-    input  logic [DATA_WIDTH-1:0] ea,
-    input  logic [DATA_WIDTH-1:0] eb,
-    input  logic [DATA_WIDTH-1:0] epc4,
-    input  logic [4:0]            ealuc,
-    input  logic                  ecall,
-    output logic [DATA_WIDTH-1:0] eal
-);
-    // ALU implementation
-    logic [DATA_WIDTH-1:0] ealu;
-    
-    always_comb begin
-        case (ealuc)
-            5'b00000: ealu = ea + eb;                        // ADD
-            5'b00001: ealu = ea - eb;                        // SUB
-            5'b00010: ealu = ea & eb;                        // AND
-            5'b00011: ealu = ea | eb;                        // OR
-            5'b00100: ealu = ea ^ eb;                        // XOR
-            5'b00101: ealu = ~(ea | eb);                     // NOR
-            5'b00110: ealu = ~(ea & eb);                     // NAND
-            5'b00111: ealu = ea << eb[5:0];                  // SLL
-            5'b01000: ealu = ea >> eb[5:0];                  // SRL
-            5'b01001: ealu = $signed(ea) >>> eb[5:0];        // SRA
-            5'b01010: ealu = ($signed(ea) < $signed(eb)) ? {{(DATA_WIDTH-1){1'b0}}, 1'b1} : {DATA_WIDTH{1'b0}}; // SLT
-            5'b01011: ealu = (ea < eb) ? {{(DATA_WIDTH-1){1'b0}}, 1'b1} : {DATA_WIDTH{1'b0}};              // SLTU
-            5'b01100: ealu = ea;                             // Pass-through A
-            5'b01101: ealu = eb;                             // Pass-through B
-            5'b01110: ealu = ~ea;                            // NOT A
-            5'b01111: ealu = (ea == eb) ? {{(DATA_WIDTH-1){1'b0}}, 1'b1} : {DATA_WIDTH{1'b0}};             // EQ
-            5'b10000: ealu = (ea != eb) ? {{(DATA_WIDTH-1){1'b0}}, 1'b1} : {DATA_WIDTH{1'b0}};             // NE
-            5'b10001: ealu = ea + {{(DATA_WIDTH-1){1'b0}}, 1'b1};                         // INC
-            5'b10010: ealu = ea - {{(DATA_WIDTH-1){1'b0}}, 1'b1};                         // DEC
-            default:  ealu = {DATA_WIDTH{1'b0}};
-        endcase
-    end
-
-    // 2-to-1 mux for ecall
-    assign eal = ecall ? epc4 : ealu;
-
-endmodule
-
-module mm_stage #(
+module memory_system #(
+    parameter ADDR_WIDTH = 64,
     parameter DATA_WIDTH = 64,
-    parameter ADDR_WIDTH = 64
+    parameter INST_WIDTH = 32,
+    parameter MEM_SIZE = 65536,    // 64KB total memory
+    parameter BURST_SIZE = 4        // Burst size for future AXI implementation
 )(
-    input  logic                        clk,
-    input  logic                        rst_n,
-
-    // Inputs from EX/MEM pipeline register
-    input  logic [DATA_WIDTH-1:0]       ex_mem_alu_result,
-    input  logic [DATA_WIDTH-1:0]       ex_mem_write_data,
-    input  logic [4:0]                  ex_mem_rd,
-    input  logic                        ex_mem_mem_read,
-    input  logic                        ex_mem_mem_write,
-    input  logic                        ex_mem_reg_write,
-
-    // Memory interface
-    output logic [ADDR_WIDTH-1:0]       mem_addr,
-    output logic [DATA_WIDTH-1:0]       mem_write_data,
-    output logic                        mem_read,
-    output logic                        mem_write,
-    input  logic [DATA_WIDTH-1:0]       mem_read_data,
-
-    // Outputs to MEM/WB pipeline register
-    output logic [DATA_WIDTH-1:0]       mem_wb_mem_data,
-    output logic [DATA_WIDTH-1:0]       mem_wb_alu_result,
-    output logic [4:0]                  mem_wb_rd,
-    output logic                        mem_wb_reg_write
+    input  logic                    clk,
+    input  logic                    rst_n,
+    
+    // Instruction Port
+    input  logic [ADDR_WIDTH-1:0]   imem_addr,
+    output logic [INST_WIDTH-1:0]   imem_read_data,
+    input  logic                    imem_read,
+    output logic                    imem_ready,
+    
+    // Data Port
+    input  logic [ADDR_WIDTH-1:0]   dmem_addr,
+    input  logic [DATA_WIDTH-1:0]   dmem_write_data,
+    input  logic                    dmem_read,
+    input  logic                    dmem_write,
+    output logic [DATA_WIDTH-1:0]   dmem_read_data,
+    output logic                    dmem_ready
 );
 
+    // Memory organization
+    // Split memory into instruction and data regions for Harvard architecture
+    localparam IMEM_SIZE = MEM_SIZE / 2;  // Half for instructions
+    localparam DMEM_SIZE = MEM_SIZE / 2;  // Half for data
+    
+    // Memory arrays
+    logic [INST_WIDTH-1:0] inst_mem [0:IMEM_SIZE/4-1];  // 32-bit words
+    logic [DATA_WIDTH-1:0] data_mem [0:DMEM_SIZE/8-1];  // 64-bit words
+    
+    // Memory initialization
+    initial begin
+        // Initialize instruction memory
+        for (int i = 0; i < IMEM_SIZE/4; i++) begin
+            inst_mem[i] = 32'h00000013; // NOP (ADDI x0, x0, 0)
+        end
+        
+        // Load test program
+        inst_mem[0] = 32'h00000013;  // NOP
+        inst_mem[1] = 32'h00A00093;  // ADDI x1, x0, 10
+        inst_mem[2] = 32'h01400113;  // ADDI x2, x0, 20
+        inst_mem[3] = 32'h002081B3;  // ADD x3, x1, x2
+        inst_mem[4] = 32'h00308233;  // ADD x4, x1, x3
+        inst_mem[5] = 32'h004102B3;  // ADD x5, x2, x4
+        inst_mem[6] = 32'h00000073;  // ECALL
+        
+        // Initialize data memory
+        for (int i = 0; i < DMEM_SIZE/8; i++) begin
+            data_mem[i] = 64'h0;
+        end
+    end
+    
+    // Instruction fetch logic
+    logic [ADDR_WIDTH-1:0] imem_addr_reg;
+    logic imem_read_reg;
+    
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            mem_addr         <= '0;
-            mem_write_data   <= '0;
-            mem_read         <= '0;
-            mem_write        <= '0;
-            mem_wb_mem_data  <= '0;
-            mem_wb_alu_result<= '0;
-            mem_wb_rd        <= '0;
-            mem_wb_reg_write <= '0;
+            imem_read_data <= '0;
+            imem_ready <= 1'b0;
+            imem_addr_reg <= '0;
+            imem_read_reg <= 1'b0;
         end else begin
-            // Memory interface
-            mem_addr       <= ex_mem_alu_result;
-            mem_write_data <= ex_mem_write_data;
-            mem_read       <= ex_mem_mem_read;
-            mem_write      <= ex_mem_mem_write;
-
-            // Forward to WB stage
-            mem_wb_alu_result <= ex_mem_alu_result;
-            mem_wb_rd         <= ex_mem_rd;
-            mem_wb_reg_write  <= ex_mem_reg_write;
-
-            // Memory data for load instructions
-            if (ex_mem_mem_read)
-                mem_wb_mem_data <= mem_read_data;
-            else
-                mem_wb_mem_data <= '0;
+            imem_addr_reg <= imem_addr;
+            imem_read_reg <= imem_read;
+            
+            if (imem_read) begin
+                // Check if address is within instruction memory range
+                if (imem_addr < IMEM_SIZE) begin
+                    // Word-aligned access (ignore lower 2 bits)
+                    imem_read_data <= inst_mem[imem_addr[31:2]];
+                    imem_ready <= 1'b1;
+                end else begin
+                    // Invalid address - return NOP
+                    imem_read_data <= 32'h00000013;
+                    imem_ready <= 1'b1;
+                end
+            end else begin
+                imem_ready <= 1'b0;
+            end
         end
     end
-
-endmodule
-
-module pl_stage_wb #(
-    parameter DATA_WIDTH = 64
-)(
-    input  logic [DATA_WIDTH-1:0] walu,
-    input  logic [DATA_WIDTH-1:0] wmem,
-    input  logic                  wmem2reg,
-    output logic [DATA_WIDTH-1:0] wdata
-);
-    // Write-back data selection
-    assign wdata = wmem2reg ? wmem : walu;
-endmodule
-
-// Pipeline support modules
-module reg_if #(
-    parameter ADDR_WIDTH = 64
-)(
-    input  logic                     clk,
-    input  logic                     reset,
-    input  logic                     stall,
-    input  logic [ADDR_WIDTH-1:0]    pc_next,
-    output logic [ADDR_WIDTH-1:0]    pc_reg
-);
-    always_ff @(posedge clk or posedge reset) begin
-        if (reset) begin
-            pc_reg <= '0;
-        end else if (!stall) begin
-            pc_reg <= pc_next;
-        end
-    end
-endmodule
-
-module memory_instruction #(
-    parameter INST_WIDTH = 32,
-    parameter X_WIDTH = 4,
-    parameter Y_WIDTH = 4
-)(
-    input  logic                    Clock,
-    input  logic                    WriteEnable,
-    input  logic [X_WIDTH-1:0]      X_addr,
-    input  logic [Y_WIDTH-1:0]      Y_addr,
-    input  logic [INST_WIDTH-1:0]   Data_in,
-    output logic [INST_WIDTH-1:0]   Data_out
-);
-    localparam DEPTH = 1 << (X_WIDTH + Y_WIDTH);
-    logic [INST_WIDTH-1:0] mem [0:DEPTH-1];
-    logic [X_WIDTH+Y_WIDTH-1:0] addr = {Y_addr, X_addr};
-
-    // Initialize with simple program
-    initial begin
-        for (int i = 0; i < DEPTH; i++) begin
-            mem[i] = 32'h00000013; // NOP
-        end
-        // Simple test program
-        mem[0] = 32'h00000013; // NOP
-        mem[1] = 32'h00A00093; // ADDI x1, x0, 10
-        mem[2] = 32'h01400113; // ADDI x2, x0, 20
-        mem[3] = 32'h002081B3; // ADD x3, x1, x2
-    end
-
-    always_ff @(posedge Clock) begin
-        if (WriteEnable) begin
-            mem[addr] <= Data_in;
-        end
-    end
-
-    assign Data_out = mem[addr];
-endmodule
-
-module reg_if_to_id #(
-    parameter ADDR_WIDTH = 64,
-    parameter INST_WIDTH = 32
-)(
-    input  logic                     clk,
-    input  logic                     reset,
-    input  logic                     stall,
-    input  logic [ADDR_WIDTH-1:0]    pc4,
-    input  logic [ADDR_WIDTH-1:0]    pc,
-    input  logic [INST_WIDTH-1:0]    inst,
-    output logic                     inst_buffer_empty,
-    output logic                     inst_buffer_full,
-    output logic [ADDR_WIDTH-1:0]    d_pc,
-    output logic [ADDR_WIDTH-1:0]    d_pc4,
-    output logic [INST_WIDTH-1:0]    d_inst
-);
-    always_ff @(posedge clk or posedge reset) begin
-        if (reset) begin
-            d_pc  <= '0;
-            d_pc4 <= '0;
-            d_inst <= '0;
-            inst_buffer_empty <= 1'b1;
-            inst_buffer_full  <= 1'b0;
-        end else if (!stall) begin
-            d_pc  <= pc;
-            d_pc4 <= pc4;
-            d_inst <= inst;
-            inst_buffer_empty <= 1'b0;
-            inst_buffer_full  <= 1'b0;
-        end
-    end
-endmodule
-
-module register_bank_list #(
-    parameter REG_NUM = 32,
-    parameter DATA_WIDTH = 64
-)(
-    input  logic                       clk,
-    input  logic                       reset,
-    input  logic                       interrupt,
-    input  logic [$clog2(REG_NUM)-1:0] write_addr_cpu,
-    input  logic [$clog2(REG_NUM)-1:0] write_addr_gpu,
-    input  logic [DATA_WIDTH-1:0]      data_in_cpu,
-    input  logic [DATA_WIDTH-1:0]      data_in_gpu,
-    input  logic                       write_en_cpu,
-    input  logic                       write_en_gpu,
-    input  logic [$clog2(REG_NUM)-1:0] read_addr_a,
-    input  logic [$clog2(REG_NUM)-1:0] read_addr_b,
-    input  logic [$clog2(REG_NUM)-1:0] read_addr_gpu,
-    output logic [DATA_WIDTH-1:0]      data_out_a,
-    output logic [DATA_WIDTH-1:0]      data_out_b,
-    output logic [DATA_WIDTH-1:0]      data_out_gpu
-);
-    logic [DATA_WIDTH-1:0] cpu_regs [0:REG_NUM-1];
-    logic [DATA_WIDTH-1:0] gpu_regs [0:REG_NUM-1];
     
-    always_ff @(posedge clk or posedge reset) begin
-        if (reset) begin
-            for (int i = 0; i < REG_NUM; i++) begin
-                cpu_regs[i] <= '0;
-                gpu_regs[i] <= '0;
-            end
+    // Data memory access logic
+    logic [ADDR_WIDTH-1:0] dmem_addr_reg;
+    logic [DATA_WIDTH-1:0] dmem_write_data_reg;
+    logic dmem_read_reg;
+    logic dmem_write_reg;
+    
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            dmem_read_data <= '0;
+            dmem_ready <= 1'b0;
+            dmem_addr_reg <= '0;
+            dmem_write_data_reg <= '0;
+            dmem_read_reg <= 1'b0;
+            dmem_write_reg <= 1'b0;
         end else begin
-            if (write_en_cpu && write_addr_cpu != 0) begin
-                cpu_regs[write_addr_cpu] <= data_in_cpu;
+            dmem_addr_reg <= dmem_addr;
+            dmem_write_data_reg <= dmem_write_data;
+            dmem_read_reg <= dmem_read;
+            dmem_write_reg <= dmem_write;
+            
+            // Default
+            dmem_ready <= 1'b0;
+            
+            // Handle write requests
+            if (dmem_write) begin
+                // Check if address is within data memory range
+                if (dmem_addr < DMEM_SIZE) begin
+                    // Double-word aligned access (ignore lower 3 bits)
+                    data_mem[dmem_addr[31:3]] <= dmem_write_data;
+                    dmem_ready <= 1'b1;
+                end else begin
+                    // Invalid address - ignore write
+                    dmem_ready <= 1'b1;
+                end
             end
-            if (write_en_gpu && write_addr_gpu != 0) begin
-                gpu_regs[write_addr_gpu] <= data_in_gpu;
+            // Handle read requests
+            else if (dmem_read) begin
+                // Check if address is within data memory range
+                if (dmem_addr < DMEM_SIZE) begin
+                    // Double-word aligned access
+                    dmem_read_data <= data_mem[dmem_addr[31:3]];
+                    dmem_ready <= 1'b1;
+                end else begin
+                    // Invalid address - return zero
+                    dmem_read_data <= '0;
+                    dmem_ready <= 1'b1;
+                end
             end
         end
     end
+    
+    // Performance counters for debugging
+    logic [31:0] imem_access_count;
+    logic [31:0] dmem_read_count;
+    logic [31:0] dmem_write_count;
+    
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            imem_access_count <= '0;
+            dmem_read_count <= '0;
+            dmem_write_count <= '0;
+        end else begin
+            if (imem_read && imem_ready)
+                imem_access_count <= imem_access_count + 1;
+            if (dmem_read && dmem_ready)
+                dmem_read_count <= dmem_read_count + 1;
+            if (dmem_write && dmem_ready)
+                dmem_write_count <= dmem_write_count + 1;
+        end
+    end
+    
+    // Assertions for verification
+    `ifdef FORMAL
+        // Ensure ready signals are only asserted after valid requests
+        always @(posedge clk) begin
+            if (imem_ready)
+                assert(imem_read_reg);
+            if (dmem_ready)
+                assert(dmem_read_reg || dmem_write_reg);
+        end
+        
+        // Ensure memory accesses are aligned
+        always @(posedge clk) begin
+            if (imem_read)
+                assert(imem_addr[1:0] == 2'b00);  // Word aligned
+            if (dmem_read || dmem_write)
+                assert(dmem_addr[2:0] == 3'b000); // Double-word aligned
+        end
+    `endif
+    
+    // Synthesis directives for Red Pitaya
+    `ifdef SYNTHESIS
+        // Infer Block RAM for Xilinx devices
+        (* ram_style = "block" *) logic [INST_WIDTH-1:0] inst_mem_synth [0:IMEM_SIZE/4-1];
+        (* ram_style = "block" *) logic [DATA_WIDTH-1:0] data_mem_synth [0:DMEM_SIZE/8-1];
+    `endif
 
-    assign data_out_a   = (read_addr_a   == 0) ? '0 : cpu_regs[read_addr_a];
-    assign data_out_b   = (read_addr_b   == 0) ? '0 : cpu_regs[read_addr_b];
-    assign data_out_gpu = (read_addr_gpu == 0) ? '0 : gpu_regs[read_addr_gpu];
+endmodule
+
+// Future AXI Interface Wrapper for Red Pitaya Integration
+// This will be needed to connect to the ZYNQ Processing System
+module memory_system_axi_wrapper #(
+    parameter C_S_AXI_DATA_WIDTH = 32,
+    parameter C_S_AXI_ADDR_WIDTH = 32,
+    parameter ADDR_WIDTH = 64,
+    parameter DATA_WIDTH = 64,
+    parameter INST_WIDTH = 32,
+    parameter MEM_SIZE = 65536
+)(
+    // AXI4-Lite Clock and Reset
+    input  logic                                s_axi_aclk,
+    input  logic                                s_axi_aresetn,
+    
+    // AXI4-Lite Write Address Channel
+    input  logic [C_S_AXI_ADDR_WIDTH-1:0]      s_axi_awaddr,
+    input  logic [2:0]                         s_axi_awprot,
+    input  logic                               s_axi_awvalid,
+    output logic                               s_axi_awready,
+    
+    // AXI4-Lite Write Data Channel
+    input  logic [C_S_AXI_DATA_WIDTH-1:0]      s_axi_wdata,
+    input  logic [(C_S_AXI_DATA_WIDTH/8)-1:0]  s_axi_wstrb,
+    input  logic                               s_axi_wvalid,
+    output logic                               s_axi_wready,
+    
+    // AXI4-Lite Write Response Channel
+    output logic [1:0]                         s_axi_bresp,
+    output logic                               s_axi_bvalid,
+    input  logic                               s_axi_bready,
+    
+    // AXI4-Lite Read Address Channel
+    input  logic [C_S_AXI_ADDR_WIDTH-1:0]      s_axi_araddr,
+    input  logic [2:0]                         s_axi_arprot,
+    input  logic                               s_axi_arvalid,
+    output logic                               s_axi_arready,
+    
+    // AXI4-Lite Read Data Channel
+    output logic [C_S_AXI_DATA_WIDTH-1:0]      s_axi_rdata,
+    output logic [1:0]                         s_axi_rresp,
+    output logic                               s_axi_rvalid,
+    input  logic                               s_axi_rready,
+    
+    // CPU Memory Interface
+    input  logic [ADDR_WIDTH-1:0]              imem_addr,
+    output logic [INST_WIDTH-1:0]              imem_read_data,
+    input  logic                               imem_read,
+    output logic                               imem_ready,
+    
+    input  logic [ADDR_WIDTH-1:0]              dmem_addr,
+    input  logic [DATA_WIDTH-1:0]              dmem_write_data,
+    input  logic                               dmem_read,
+    input  logic                               dmem_write,
+    output logic [DATA_WIDTH-1:0]              dmem_read_data,
+    output logic                               dmem_ready
+);
+
+    // TODO: Implement AXI4-Lite state machine for Red Pitaya integration
+    // This will handle:
+    // 1. AXI protocol conversion
+    // 2. Address translation between CPU and ZYNQ memory space
+    // 3. Data width conversion (32-bit AXI to 64-bit CPU)
+    // 4. Burst handling for improved performance
+    
+    // For now, instantiate the basic memory system
+    memory_system #(
+        .ADDR_WIDTH(ADDR_WIDTH),
+        .DATA_WIDTH(DATA_WIDTH),
+        .INST_WIDTH(INST_WIDTH),
+        .MEM_SIZE(MEM_SIZE)
+    ) mem_sys (
+        .clk(s_axi_aclk),
+        .rst_n(s_axi_aresetn),
+        .imem_addr(imem_addr),
+        .imem_read_data(imem_read_data),
+        .imem_read(imem_read),
+        .imem_ready(imem_ready),
+        .dmem_addr(dmem_addr),
+        .dmem_write_data(dmem_write_data),
+        .dmem_read(dmem_read),
+        .dmem_write(dmem_write),
+        .dmem_read_data(dmem_read_data),
+        .dmem_ready(dmem_ready)
+    );
+    
+    // Tie off AXI signals for now
+    assign s_axi_awready = 1'b1;
+    assign s_axi_wready = 1'b1;
+    assign s_axi_bresp = 2'b00;
+    assign s_axi_bvalid = s_axi_wvalid && s_axi_awvalid;
+    assign s_axi_arready = 1'b1;
+    assign s_axi_rdata = 32'h0;
+    assign s_axi_rresp = 2'b00;
+    assign s_axi_rvalid = s_axi_arvalid;
+
 endmodule

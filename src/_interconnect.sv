@@ -1,4 +1,4 @@
-module interconnect #(
+module _interconnect #(
     parameter ADDR_WIDTH = 64,
     parameter DATA_WIDTH = 64,
     parameter NUM_MASTERS = 2,  // CPU, GPU
