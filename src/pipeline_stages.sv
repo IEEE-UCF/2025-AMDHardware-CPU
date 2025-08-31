@@ -413,12 +413,8 @@ module memory_instruction #(
 
     initial begin
         for (int i = 0; i < DEPTH; i++) begin
-            mem[i] = 32'h00000013; // NOP
+            mem[i] = 32'h00000013; // NOP only
         end
-        mem[0] = 32'h00000013; // NOP
-        mem[1] = 32'h00A00093; // ADDI x1, x0, 10
-        mem[2] = 32'h01400113; // ADDI x2, x0, 20
-        mem[3] = 32'h002081B3; // ADD x3, x1, x2
     end
 
     always_ff @(posedge Clock) begin

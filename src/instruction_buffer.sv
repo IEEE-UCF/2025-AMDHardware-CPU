@@ -34,8 +34,10 @@ module instruction_buffer #(parameter INST_WIDTH = 32, BUFFER_DEPTH = 8)(
             read_ptr <= 0;
             inst_curr <= {INST_WIDTH{1'b0}};
         end else begin
-            inst_curr <= inst_buffer[read_ptr[$clog2(BUFFER_DEPTH)-1:0]];
-            read_ptr <= read_ptr + 1;
+            if (read_en && !is_empty_flag) begin
+                inst_curr <= inst_buffer[read_ptr[$clog2(BUFFER_DEPTH)-1:0]];
+                read_ptr <= read_ptr + 1;
+            end
             // Write operation
             if (write_en && ~is_full_flag) begin
                 inst_buffer[write_ptr[$clog2(BUFFER_DEPTH)-1:0]] <= data_in;

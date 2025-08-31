@@ -81,15 +81,9 @@ module red_pitaya_cpu_wrapper #(
     logic                     cp_instruction_detected;
     logic [INST_WIDTH-1:0]    cp_instruction_out;
     
-    // Clock divider for CPU (125MHz PS clock -> 62.5MHz CPU clock)
-    logic clk_div;
-    always_ff @(posedge s_axi_aclk) begin
-        if (!s_axi_aresetn)
-            clk_div <= 1'b0;
-        else
-            clk_div <= ~clk_div;
-    end
-    assign cpu_clk = clk_div;
+    // 125MHz clock for CPU
+    assign cpu_clk = s_axi_aclk;
+
     
     // Reset synchronization
     always_ff @(posedge cpu_clk) begin

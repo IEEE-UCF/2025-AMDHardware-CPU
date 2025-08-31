@@ -2,8 +2,8 @@ module memory_system #(
     parameter ADDR_WIDTH = 32,
     parameter DATA_WIDTH = 32,
     parameter INST_WIDTH = 32,
-    parameter IMEM_SIZE = 8192,   // 8KB instruction memory (reduced)
-    parameter DMEM_SIZE = 8192,    // 8KB data memory (reduced)
+    parameter IMEM_SIZE = 32768,   // 32KB instruction memory 
+    parameter DMEM_SIZE = 32768,    // 32KB data memory
     parameter BURST_SIZE = 4
 )(
     input  logic                    clk,
@@ -30,8 +30,8 @@ module memory_system #(
 );
 
     // Use Xilinx Block RAM attributes for synthesis
-    (* ram_style = "block" *) logic [INST_WIDTH-1:0] inst_mem [0:IMEM_SIZE/4-1];
-    (* ram_style = "block" *) logic [DATA_WIDTH-1:0] data_mem [0:DMEM_SIZE/4-1];
+    (* ram_style = "distributed" *) logic [INST_WIDTH-1:0] inst_mem [0:IMEM_SIZE/4-1];
+    (* ram_style = "distributed" *) logic [DATA_WIDTH-1:0] data_mem [0:DMEM_SIZE/4-1];
     
     // Simple cache line buffers
     logic [INST_WIDTH-1:0] icache_data;
@@ -41,28 +41,6 @@ module memory_system #(
     logic [DATA_WIDTH-1:0] dcache_data;
     logic [ADDR_WIDTH-1:0] dcache_tag;
     logic dcache_valid;
-    
-    // Initialize memories
-    initial begin
-        // Initialize instruction memory with NOPs
-        for (int i = 0; i < IMEM_SIZE/4; i++) begin
-            inst_mem[i] = 32'h00000013; // NOP
-        end
-        
-        // Simple test program
-        inst_mem[0] = 32'h00000013;  // NOP
-        inst_mem[1] = 32'h00500093;  // ADDI x1, x0, 5
-        inst_mem[2] = 32'h00A00113;  // ADDI x2, x0, 10
-        inst_mem[3] = 32'h002081B3;  // ADD x3, x1, x2
-        inst_mem[4] = 32'h00308233;  // ADD x4, x1, x3
-        inst_mem[5] = 32'h004102B3;  // ADD x5, x2, x4
-        inst_mem[6] = 32'h00000073;  // ECALL
-        
-        // Initialize data memory
-        for (int i = 0; i < DMEM_SIZE/4; i++) begin
-            data_mem[i] = 32'h0;
-        end
-    end
     
     // Instruction fetch logic
     always_ff @(posedge clk or negedge rst_n) begin

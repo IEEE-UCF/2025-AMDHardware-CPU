@@ -28,9 +28,10 @@ module _interconnect #(
 
     // Address map for 32-bit addressing
     localparam logic [ADDR_WIDTH-1:0] MAIN_MEM_BASE   = 32'h0000_0000;
-    localparam logic [ADDR_WIDTH-1:0] MAIN_MEM_SIZE   = 32'h0800_0000; // 128MB
-    localparam logic [ADDR_WIDTH-1:0] GPU_MEM_BASE    = 32'h0800_0000;
-    localparam logic [ADDR_WIDTH-1:0] GPU_MEM_SIZE    = 32'h0400_0000; // 64MB
+    localparam logic [ADDR_WIDTH-1:0] MAIN_MEM_SIZE   = 32'h2000_0000; // 512MB (Red Pitaya DDR)
+    localparam logic [ADDR_WIDTH-1:0] GPU_MEM_BASE    = 32'h1000_0000;
+    localparam logic [ADDR_WIDTH-1:0] GPU_MEM_SIZE    = 32'h1000_0000; // 256MB for GPU
+
     localparam logic [ADDR_WIDTH-1:0] PERIPH_BASE     = 32'h0C00_0000;
     localparam logic [ADDR_WIDTH-1:0] PERIPH_SIZE     = 32'h0100_0000; // 16MB
     localparam logic [ADDR_WIDTH-1:0] CONFIG_BASE     = 32'h0F00_0000;

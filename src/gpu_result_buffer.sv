@@ -36,16 +36,14 @@ module gpu_result_buffer #(
 );
 
     // Result entry structure
-    typedef struct packed {
-        logic [VEC_SIZE-1:0][DATA_WIDTH-1:0] data;
-        logic [TAG_WIDTH-1:0]                tag;
-        logic [3:0]                          dest_reg;
-        logic                                 is_vector;
-        logic                                 write_mem;
-        logic [ADDR_WIDTH-1:0]               mem_addr;
-        logic                                 valid;
-        logic                                 ready;
-    } result_entry_t;
+    logic [VEC_SIZE-1:0][DATA_WIDTH-1:0] buffer_data [BUFFER_DEPTH-1:0];
+    logic [TAG_WIDTH-1:0]                buffer_tag [BUFFER_DEPTH-1:0];
+    logic [3:0]                          buffer_dest_reg [BUFFER_DEPTH-1:0];
+    logic                                 buffer_is_vector [BUFFER_DEPTH-1:0];
+    logic                                 buffer_write_mem [BUFFER_DEPTH-1:0];
+    logic [ADDR_WIDTH-1:0]               buffer_mem_addr [BUFFER_DEPTH-1:0];
+    logic                                 buffer_valid [BUFFER_DEPTH-1:0];
+    logic                                 buffer_ready [BUFFER_DEPTH-1:0];
     
     result_entry_t buffer[BUFFER_DEPTH];
     

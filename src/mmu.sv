@@ -1,3 +1,5 @@
+ifndef DISABLE_MMU
+
 module mmu #(
     parameter VADDR_WIDTH = 32,  // Virtual address width - 32-bit for Red Pitaya
     parameter PADDR_WIDTH = 32,  // Physical address width - 32-bit for Red Pitaya
@@ -360,3 +362,42 @@ module mmu #(
     end
 
 endmodule
+
+`else
+// Simplified MMU bypass for resource-constrained FPGA
+module mmu #(
+    parameter VADDR_WIDTH = 32,
+    parameter PADDR_WIDTH = 32,
+    parameter DATA_WIDTH = 32,
+    parameter TLB_ENTRIES = 16,
+    parameter PAGE_SIZE = 4096
+)(
+    input  logic                    clk,
+    input  logic                    rst_n,
+    input  logic [VADDR_WIDTH-1:0]  vaddr,
+    input  logic                    req_valid,
+    input  logic                    req_write,
+    input  logic [1:0]              req_priv,
+    output logic [PADDR_WIDTH-1:0] paddr,
+    output logic                    trans_valid,
+    output logic                    page_fault,
+    output logic                    access_fault,
+    input  logic [PADDR_WIDTH-1:0] satp,
+    input  logic                    vm_enable,
+    output logic                    ptw_req,
+    output logic [PADDR_WIDTH-1:0] ptw_addr,
+    input  logic [DATA_WIDTH-1:0]  ptw_data,
+    input  logic                    ptw_ready,
+    input  logic                    tlb_flush,
+    input  logic                    tlb_flush_vaddr,
+    input  logic [VADDR_WIDTH-1:0] tlb_flush_addr
+);
+    // Direct mapping - no translation
+    assign paddr = vaddr;
+    assign trans_valid = req_valid;
+    assign page_fault = 1'b0;
+    assign access_fault = 1'b0;
+    assign ptw_req = 1'b0;
+    assign ptw_addr = '0;
+endmodule
+`endif

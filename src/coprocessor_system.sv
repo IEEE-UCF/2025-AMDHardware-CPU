@@ -295,17 +295,20 @@ module coprocessor_system #(
                                 full_product = $unsigned(rs1_data) * $unsigned(rs2_data);
                                 mul_result <= full_product[63:32];
                             end
-                            3'b100: begin // DIV
+                            3'b100: begin // DIV - use iterative divider or mark as unsupported
                                 if (rs2_data == 0)
-                                    mul_result <= 32'hFFFFFFFF; // Division by zero
-                                else
-                                    mul_result <= $signed(rs1_data) / $signed(rs2_data);
+                                    mul_result <= 32'hFFFFFFFF;
+                                else begin
+                                    // Simple shift-based approximation or flag for software emulation
+                                    mul_result <= 32'hDEADBEEF; // Mark as unimplemented
+                                end
                             end
                             3'b101: begin // DIVU
                                 if (rs2_data == 0)
                                     mul_result <= 32'hFFFFFFFF;
-                                else
-                                    mul_result <= rs1_data / rs2_data;
+                                else begin
+                                    mul_result <= 32'hDEADBEEF; // Mark as unimplemented
+                                end
                             end
                             3'b110: begin // REM
                                 if (rs2_data == 0)
