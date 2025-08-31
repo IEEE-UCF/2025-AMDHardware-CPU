@@ -195,27 +195,29 @@ module red_pitaya_cpu_wrapper #(
     always_ff @(posedge s_axi_aclk) begin
         if (!s_axi_aresetn) begin
             axi_araddr_reg <= '0;
-            s_axi_rdata <= '0;
         end else begin
             if (s_axi_arvalid && s_axi_arready) begin
                 axi_araddr_reg <= s_axi_araddr;
             end
-            
-            if (axi_state == READ_DATA) begin
-                // Decode register reads based on address
-                case (axi_araddr_reg[11:2])
-                    10'h000: s_axi_rdata <= {31'b0, cpu_enable};
-                    10'h001: s_axi_rdata <= {31'b0, cpu_reset_req};
-                    10'h002: s_axi_rdata <= {31'b0, single_step_mode};
-                    10'h003: s_axi_rdata <= cpu_start_pc;
-                    10'h004: s_axi_rdata <= cpu_status;
-                    10'h005: s_axi_rdata <= debug_pc;
-                    10'h006: s_axi_rdata <= cpu_cycles;
-                    10'h007: s_axi_rdata <= cpu_instructions;
-                    10'h008: s_axi_rdata <= {28'b0, debug_state};
-                    default: s_axi_rdata <= 32'hDEADBEEF;
-                endcase
-            end
+        end
+    end
+
+    always_comb begin
+        s_axi_rdata = 32'h0;
+        if (axi_state == READ_DATA) begin
+            // Decode register reads based on address
+            case (axi_araddr_reg[11:2])
+                10'h000: s_axi_rdata = {31'b0, cpu_enable};
+                10'h001: s_axi_rdata = {31'b0, cpu_reset_req};
+                10'h002: s_axi_rdata = {31'b0, single_step_mode};
+                10'h003: s_axi_rdata = cpu_start_pc;
+                10'h004: s_axi_rdata = cpu_status;
+                10'h005: s_axi_rdata = debug_pc;
+                10'h006: s_axi_rdata = cpu_cycles;
+                10'h007: s_axi_rdata = cpu_instructions;
+                10'h008: s_axi_rdata = {28'b0, debug_state};
+                default: s_axi_rdata = 32'hDEADBEEF;
+            endcase
         end
     end
     
