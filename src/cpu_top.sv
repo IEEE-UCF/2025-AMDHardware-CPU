@@ -1,5 +1,5 @@
 module cpu_top #(
-    parameter ADDR_WIDTH = 64,
+    parameter ADDR_WIDTH = 32,  // Changed to 32-bit for Zynq
     parameter DATA_WIDTH = 64,
     parameter INST_WIDTH = 32,
     parameter REG_NUM = 32
@@ -19,17 +19,27 @@ module cpu_top #(
     output logic [DATA_WIDTH-1:0]    dmem_write_data,
     output logic                      dmem_read,
     output logic                      dmem_write,
+    output logic [7:0]                dmem_byte_enable,  // Added for partial writes
     input  logic [DATA_WIDTH-1:0]    dmem_read_data,
-    input  logic                      dmem_ready
+    input  logic                      dmem_ready,
+    
+    // Coprocessor Interface (for external connection)
+    output logic                      cp_instruction_detected,
+    output logic [INST_WIDTH-1:0]     cp_instruction_out,
+    input  logic                      cp_stall_external,
+    
+    // Debug/Status Interface
+    output logic [ADDR_WIDTH-1:0]    debug_pc,
+    output logic                      debug_stall,
+    output logic [3:0]               debug_state
 );
     
-    // IF/ID Pipeline Register
+    // Pipeline Registers - Using 32-bit addresses
     logic [ADDR_WIDTH-1:0]   if_id_pc;
     logic [ADDR_WIDTH-1:0]   if_id_pc4;
     logic [INST_WIDTH-1:0]   if_id_inst;
     logic                    if_id_valid;
     
-    // ID/EX Pipeline Register
     logic [ADDR_WIDTH-1:0]   id_ex_pc;
     logic [DATA_WIDTH-1:0]   id_ex_rs1_data;
     logic [DATA_WIDTH-1:0]   id_ex_rs2_data;
@@ -45,17 +55,17 @@ module cpu_top #(
     logic                    id_ex_branch;
     logic                    id_ex_jump;
     logic                    id_ex_valid;
+    logic [2:0]              id_ex_funct3;  // Added for memory operations
     
-    // EX/MEM Pipeline Register
-    logic [ADDR_WIDTH-1:0]   ex_mem_alu_result;
+    logic [DATA_WIDTH-1:0]   ex_mem_alu_result;  // Keep 64-bit for data
     logic [DATA_WIDTH-1:0]   ex_mem_rs2_data;
     logic [4:0]              ex_mem_rd;
     logic                    ex_mem_mem_read;
     logic                    ex_mem_mem_write;
     logic                    ex_mem_reg_write;
     logic                    ex_mem_valid;
+    logic [2:0]              ex_mem_funct3;  // For byte/halfword/word selection
     
-    // MEM/WB Pipeline Register
     logic [DATA_WIDTH-1:0]   mem_wb_alu_result;
     logic [DATA_WIDTH-1:0]   mem_wb_mem_data;
     logic [4:0]              mem_wb_rd;
@@ -89,14 +99,35 @@ module cpu_top #(
     // Forwarding signals
     logic [1:0]              forward_a;
     logic [1:0]              forward_b;
-    logic [DATA_WIDTH-1:0]   forward_rs1_data;
-    logic [DATA_WIDTH-1:0]   forward_rs2_data;
     
     // Coprocessor signals
-    logic                    cp_instruction_detected;
     logic                    cp_stall;
     logic [DATA_WIDTH-1:0]   cp_result;
     logic                    cp_result_valid;
+    
+    // Combined stall signal
+    logic                    global_stall;
+    assign global_stall = stall_if || stall_id || stall_ex || stall_mem || cp_stall || cp_stall_external;
+    
+    // Debug outputs
+    assign debug_pc = if_id_pc;
+    assign debug_stall = global_stall;
+    assign debug_state = {flush_ex, flush_id, flush_if, global_stall};
+    assign cp_instruction_out = if_id_inst;
+    
+    // Generate byte enables based on memory operation type
+    always_comb begin
+        dmem_byte_enable = 8'hFF;  // Default: full word
+        if (ex_mem_mem_write || ex_mem_mem_read) begin
+            case (ex_mem_funct3)
+                3'b000: dmem_byte_enable = 8'h01;  // SB/LB
+                3'b001: dmem_byte_enable = 8'h03;  // SH/LH
+                3'b010: dmem_byte_enable = 8'h0F;  // SW/LW
+                3'b011: dmem_byte_enable = 8'hFF;  // SD/LD
+                default: dmem_byte_enable = 8'hFF;
+            endcase
+        end
+    end
     
     pipeline_if #(
         .ADDR_WIDTH(ADDR_WIDTH),
@@ -104,7 +135,7 @@ module cpu_top #(
     ) u_if (
         .clk(clk),
         .rst_n(rst_n),
-        .stall(stall_if),
+        .stall(stall_if || global_stall),
         .flush(flush_if),
         .branch_taken(branch_taken),
         .branch_target(branch_target),
@@ -128,7 +159,7 @@ module cpu_top #(
     ) u_id (
         .clk(clk),
         .rst_n(rst_n),
-        .stall(stall_id),
+        .stall(stall_id || global_stall),
         .flush(flush_id),
         .if_id_pc(if_id_pc),
         .if_id_pc4(if_id_pc4),
@@ -152,6 +183,7 @@ module cpu_top #(
         .id_ex_branch(id_ex_branch),
         .id_ex_jump(id_ex_jump),
         .id_ex_valid(id_ex_valid),
+        .id_ex_funct3(id_ex_funct3),
         .branch_taken(branch_taken),
         .branch_target(branch_target),
         .jump_taken(jump_taken),
@@ -164,7 +196,7 @@ module cpu_top #(
     ) u_ex (
         .clk(clk),
         .rst_n(rst_n),
-        .stall(stall_ex),
+        .stall(stall_ex || global_stall),
         .flush(flush_ex),
         .id_ex_pc(id_ex_pc),
         .id_ex_rs1_data(id_ex_rs1_data),
@@ -179,6 +211,7 @@ module cpu_top #(
         .id_ex_mem_write(id_ex_mem_write),
         .id_ex_reg_write(id_ex_reg_write),
         .id_ex_valid(id_ex_valid),
+        .id_ex_funct3(id_ex_funct3),
         .forward_a(forward_a),
         .forward_b(forward_b),
         .ex_mem_alu_result(ex_mem_alu_result),
@@ -190,9 +223,9 @@ module cpu_top #(
         .ex_mem_mem_read(ex_mem_mem_read),
         .ex_mem_mem_write(ex_mem_mem_write),
         .ex_mem_reg_write(ex_mem_reg_write),
-        .ex_mem_valid(ex_mem_valid)
+        .ex_mem_valid(ex_mem_valid),
+        .ex_mem_funct3(ex_mem_funct3)
     );
-    
     
     pipeline_mem #(
         .ADDR_WIDTH(ADDR_WIDTH),
@@ -200,8 +233,8 @@ module cpu_top #(
     ) u_mem (
         .clk(clk),
         .rst_n(rst_n),
-        .stall(stall_mem),
-        .ex_mem_alu_result(ex_mem_alu_result),
+        .stall(stall_mem || global_stall),
+        .ex_mem_alu_result(ex_mem_alu_result[ADDR_WIDTH-1:0]),  // Truncate to address width
         .ex_mem_rs2_data(ex_mem_rs2_data),
         .ex_mem_rd(ex_mem_rd),
         .ex_mem_mem_read(ex_mem_mem_read),
@@ -222,7 +255,6 @@ module cpu_top #(
         .mem_wb_valid(mem_wb_valid)
     );
     
-    
     pipeline_wb #(
         .DATA_WIDTH(DATA_WIDTH)
     ) u_wb (
@@ -231,7 +263,6 @@ module cpu_top #(
         .mem_wb_mem_to_reg(mem_wb_mem_to_reg),
         .wb_data(wb_data)
     );
-    
     
     hazard_detection_unit #(
         .REG_ADDR_WIDTH(5)
@@ -242,7 +273,7 @@ module cpu_top #(
         .if_id_rs2(if_id_inst[24:20]),
         .branch_taken(branch_taken),
         .jump_taken(jump_taken),
-        .cp_stall(cp_stall),
+        .cp_stall(cp_stall || cp_stall_external),
         .stall_if(stall_if),
         .stall_id(stall_id),
         .stall_ex(stall_ex),
@@ -253,7 +284,6 @@ module cpu_top #(
         .load_use_hazard(load_use_hazard),
         .control_hazard(control_hazard)
     );
-    
     
     forwarding_unit #(
         .REG_ADDR_WIDTH(5)
@@ -288,76 +318,9 @@ module cpu_top #(
 
 endmodule
 
-module pipeline_if #(
-    parameter ADDR_WIDTH = 64,
-    parameter INST_WIDTH = 32
-)(
-    input  logic                    clk,
-    input  logic                    rst_n,
-    input  logic                    stall,
-    input  logic                    flush,
-    input  logic                    branch_taken,
-    input  logic [ADDR_WIDTH-1:0]   branch_target,
-    input  logic                    jump_taken,
-    input  logic [ADDR_WIDTH-1:0]   jump_target,
-    
-    // Memory interface
-    output logic [ADDR_WIDTH-1:0]   imem_addr,
-    input  logic [INST_WIDTH-1:0]   imem_read_data,
-    output logic                    imem_read,
-    input  logic                    imem_ready,
-    
-    // IF/ID pipeline register
-    output logic [ADDR_WIDTH-1:0]   if_id_pc,
-    output logic [ADDR_WIDTH-1:0]   if_id_pc4,
-    output logic [INST_WIDTH-1:0]   if_id_inst,
-    output logic                    if_id_valid
-);
-
-    logic [ADDR_WIDTH-1:0] pc, pc_next;
-    
-    // PC logic
-    always_comb begin
-        if (jump_taken)
-            pc_next = jump_target;
-        else if (branch_taken)
-            pc_next = branch_target;
-        else if (!stall)
-            pc_next = pc + 4;
-        else
-            pc_next = pc;
-    end
-    
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n)
-            pc <= '0;
-        else if (!stall)
-            pc <= pc_next;
-    end
-    
-    // Memory interface
-    assign imem_addr = pc;
-    assign imem_read = 1'b1;
-    
-    // Pipeline register
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n || flush) begin
-            if_id_pc <= '0;
-            if_id_pc4 <= '0;
-            if_id_inst <= 32'h00000013; // NOP
-            if_id_valid <= 1'b0;
-        end else if (!stall) begin
-            if_id_pc <= pc;
-            if_id_pc4 <= pc + 4;
-            if_id_inst <= imem_read_data;
-            if_id_valid <= imem_ready;
-        end
-    end
-
-endmodule
-
+// Updated pipeline_id to include funct3 output
 module pipeline_id #(
-    parameter ADDR_WIDTH = 64,
+    parameter ADDR_WIDTH = 32,
     parameter DATA_WIDTH = 64,
     parameter INST_WIDTH = 32,
     parameter REG_NUM = 32
@@ -367,18 +330,15 @@ module pipeline_id #(
     input  logic                    stall,
     input  logic                    flush,
     
-    // IF/ID pipeline register
     input  logic [ADDR_WIDTH-1:0]   if_id_pc,
     input  logic [ADDR_WIDTH-1:0]   if_id_pc4,
     input  logic [INST_WIDTH-1:0]   if_id_inst,
     input  logic                    if_id_valid,
     
-    // Write-back interface
     input  logic [DATA_WIDTH-1:0]   wb_data,
     input  logic [4:0]              wb_rd,
     input  logic                    wb_reg_write,
     
-    // ID/EX pipeline register
     output logic [ADDR_WIDTH-1:0]   id_ex_pc,
     output logic [DATA_WIDTH-1:0]   id_ex_rs1_data,
     output logic [DATA_WIDTH-1:0]   id_ex_rs2_data,
@@ -394,8 +354,8 @@ module pipeline_id #(
     output logic                    id_ex_branch,
     output logic                    id_ex_jump,
     output logic                    id_ex_valid,
+    output logic [2:0]              id_ex_funct3,
     
-    // Branch/Jump signals
     output logic                    branch_taken,
     output logic [ADDR_WIDTH-1:0]   branch_target,
     output logic                    jump_taken,
@@ -433,19 +393,19 @@ module pipeline_id #(
     assign rs1_data = (rs1 == 0) ? '0 : registers[rs1];
     assign rs2_data = (rs2 == 0) ? '0 : registers[rs2];
     
-    // Immediate generation
+    // Immediate generation - adjusted for 32-bit addresses
     always_comb begin
         case (opcode)
             7'b0010011, 7'b0000011, 7'b1100111: // I-type
-                imm = {{52{if_id_inst[31]}}, if_id_inst[31:20]};
+                imm = {{(DATA_WIDTH-12){if_id_inst[31]}}, if_id_inst[31:20]};
             7'b0100011: // S-type
-                imm = {{52{if_id_inst[31]}}, if_id_inst[31:25], if_id_inst[11:7]};
+                imm = {{(DATA_WIDTH-12){if_id_inst[31]}}, if_id_inst[31:25], if_id_inst[11:7]};
             7'b1100011: // B-type
-                imm = {{51{if_id_inst[31]}}, if_id_inst[31], if_id_inst[7], if_id_inst[30:25], if_id_inst[11:8], 1'b0};
+                imm = {{(DATA_WIDTH-13){if_id_inst[31]}}, if_id_inst[31], if_id_inst[7], if_id_inst[30:25], if_id_inst[11:8], 1'b0};
             7'b0110111, 7'b0010111: // U-type
-                imm = {{32{if_id_inst[31]}}, if_id_inst[31:12], 12'b0};
+                imm = {{(DATA_WIDTH-32){if_id_inst[31]}}, if_id_inst[31:12], 12'b0};
             7'b1101111: // J-type
-                imm = {{43{if_id_inst[31]}}, if_id_inst[31], if_id_inst[19:12], if_id_inst[20], if_id_inst[30:21], 1'b0};
+                imm = {{(DATA_WIDTH-21){if_id_inst[31]}}, if_id_inst[31], if_id_inst[19:12], if_id_inst[20], if_id_inst[30:21], 1'b0};
             default: 
                 imm = '0;
         endcase
@@ -510,7 +470,7 @@ module pipeline_id #(
     // Branch logic
     always_comb begin
         branch_taken = 1'b0;
-        branch_target = if_id_pc + imm;
+        branch_target = if_id_pc + imm[ADDR_WIDTH-1:0];
         
         if (branch && if_id_valid) begin
             case (funct3)
@@ -529,9 +489,9 @@ module pipeline_id #(
     always_comb begin
         jump_taken = jump && if_id_valid;
         if (opcode == 7'b1100111) // JALR
-            jump_target = (rs1_data + imm) & ~64'h1;
+            jump_target = (rs1_data + imm) & ~32'h1;  // 32-bit address
         else // JAL
-            jump_target = if_id_pc + imm;
+            jump_target = if_id_pc + imm[ADDR_WIDTH-1:0];
     end
     
     // Pipeline register
@@ -552,6 +512,7 @@ module pipeline_id #(
             id_ex_branch <= '0;
             id_ex_jump <= '0;
             id_ex_valid <= '0;
+            id_ex_funct3 <= '0;
         end else if (!stall) begin
             id_ex_pc <= if_id_pc;
             id_ex_rs1_data <= rs1_data;
@@ -568,13 +529,15 @@ module pipeline_id #(
             id_ex_branch <= branch;
             id_ex_jump <= jump;
             id_ex_valid <= if_id_valid && !branch_taken && !jump_taken;
+            id_ex_funct3 <= funct3;
         end
     end
 
 endmodule
 
+// Updated pipeline_ex to pass through funct3
 module pipeline_ex #(
-    parameter ADDR_WIDTH = 64,
+    parameter ADDR_WIDTH = 32,
     parameter DATA_WIDTH = 64
 )(
     input  logic                    clk,
@@ -582,7 +545,6 @@ module pipeline_ex #(
     input  logic                    stall,
     input  logic                    flush,
     
-    // ID/EX pipeline register
     input  logic [ADDR_WIDTH-1:0]   id_ex_pc,
     input  logic [DATA_WIDTH-1:0]   id_ex_rs1_data,
     input  logic [DATA_WIDTH-1:0]   id_ex_rs2_data,
@@ -596,22 +558,22 @@ module pipeline_ex #(
     input  logic                    id_ex_mem_write,
     input  logic                    id_ex_reg_write,
     input  logic                    id_ex_valid,
+    input  logic [2:0]              id_ex_funct3,
     
-    // Forwarding
     input  logic [1:0]              forward_a,
     input  logic [1:0]              forward_b,
     input  logic [DATA_WIDTH-1:0]   ex_mem_alu_result,
     input  logic [DATA_WIDTH-1:0]   mem_wb_alu_result,
     input  logic [DATA_WIDTH-1:0]   mem_wb_mem_data,
     
-    // EX/MEM pipeline register
-    output logic [ADDR_WIDTH-1:0]   ex_mem_alu_result_out,
+    output logic [DATA_WIDTH-1:0]   ex_mem_alu_result_out,
     output logic [DATA_WIDTH-1:0]   ex_mem_rs2_data,
     output logic [4:0]              ex_mem_rd,
     output logic                    ex_mem_mem_read,
     output logic                    ex_mem_mem_write,
     output logic                    ex_mem_reg_write,
-    output logic                    ex_mem_valid
+    output logic                    ex_mem_valid,
+    output logic [2:0]              ex_mem_funct3
 );
 
     logic [DATA_WIDTH-1:0] alu_a, alu_b, alu_result;
@@ -660,6 +622,7 @@ module pipeline_ex #(
             ex_mem_mem_write <= '0;
             ex_mem_reg_write <= '0;
             ex_mem_valid <= '0;
+            ex_mem_funct3 <= '0;
         end else if (!stall) begin
             ex_mem_alu_result_out <= alu_result;
             ex_mem_rs2_data <= id_ex_rs2_data;
@@ -668,21 +631,22 @@ module pipeline_ex #(
             ex_mem_mem_write <= id_ex_mem_write;
             ex_mem_reg_write <= id_ex_reg_write;
             ex_mem_valid <= id_ex_valid;
+            ex_mem_funct3 <= id_ex_funct3;
         end
     end
 
 endmodule
 
+// Updated pipeline_mem with correct address width
 module pipeline_mem #(
-    parameter ADDR_WIDTH = 64,
+    parameter ADDR_WIDTH = 32,
     parameter DATA_WIDTH = 64
 )(
     input  logic                    clk,
     input  logic                    rst_n,
     input  logic                    stall,
     
-    // EX/MEM pipeline register
-    input  logic [ADDR_WIDTH-1:0]   ex_mem_alu_result,
+    input  logic [ADDR_WIDTH-1:0]   ex_mem_alu_result,  // Now 32-bit address
     input  logic [DATA_WIDTH-1:0]   ex_mem_rs2_data,
     input  logic [4:0]              ex_mem_rd,
     input  logic                    ex_mem_mem_read,
@@ -690,7 +654,6 @@ module pipeline_mem #(
     input  logic                    ex_mem_reg_write,
     input  logic                    ex_mem_valid,
     
-    // Memory interface
     output logic [ADDR_WIDTH-1:0]   dmem_addr,
     output logic [DATA_WIDTH-1:0]   dmem_write_data,
     output logic                    dmem_read,
@@ -698,7 +661,6 @@ module pipeline_mem #(
     input  logic [DATA_WIDTH-1:0]   dmem_read_data,
     input  logic                    dmem_ready,
     
-    // MEM/WB pipeline register
     output logic [DATA_WIDTH-1:0]   mem_wb_alu_result,
     output logic [DATA_WIDTH-1:0]   mem_wb_mem_data,
     output logic [4:0]              mem_wb_rd,
@@ -723,131 +685,13 @@ module pipeline_mem #(
             mem_wb_mem_to_reg <= '0;
             mem_wb_valid <= '0;
         end else if (!stall) begin
-            mem_wb_alu_result <= ex_mem_alu_result;
+            mem_wb_alu_result <= {32'b0, ex_mem_alu_result};  // Zero-extend address to 64-bit
             mem_wb_mem_data <= dmem_read_data;
             mem_wb_rd <= ex_mem_rd;
             mem_wb_reg_write <= ex_mem_reg_write;
             mem_wb_mem_to_reg <= ex_mem_mem_read;
             mem_wb_valid <= ex_mem_valid;
         end
-    end
-
-endmodule
-
-module pipeline_wb #(
-    parameter DATA_WIDTH = 64
-)(
-    input  logic [DATA_WIDTH-1:0]   mem_wb_alu_result,
-    input  logic [DATA_WIDTH-1:0]   mem_wb_mem_data,
-    input  logic                    mem_wb_mem_to_reg,
-    output logic [DATA_WIDTH-1:0]   wb_data
-);
-
-    assign wb_data = mem_wb_mem_to_reg ? mem_wb_mem_data : mem_wb_alu_result;
-
-endmodule
-
-module hazard_detection_unit #(
-    parameter REG_ADDR_WIDTH = 5
-)(
-    input  logic                         id_ex_mem_read,
-    input  logic [REG_ADDR_WIDTH-1:0]   id_ex_rd,
-    input  logic [REG_ADDR_WIDTH-1:0]   if_id_rs1,
-    input  logic [REG_ADDR_WIDTH-1:0]   if_id_rs2,
-    input  logic                         branch_taken,
-    input  logic                         jump_taken,
-    input  logic                         cp_stall,
-    
-    output logic                         stall_if,
-    output logic                         stall_id,
-    output logic                         stall_ex,
-    output logic                         stall_mem,
-    output logic                         flush_if,
-    output logic                         flush_id,
-    output logic                         flush_ex,
-    output logic                         load_use_hazard,
-    output logic                         control_hazard
-);
-
-    // Load-use hazard detection
-    always_comb begin
-        load_use_hazard = id_ex_mem_read && 
-                         ((id_ex_rd == if_id_rs1 && if_id_rs1 != 0) ||
-                          (id_ex_rd == if_id_rs2 && if_id_rs2 != 0));
-    end
-    
-    // Control hazard detection
-    assign control_hazard = branch_taken || jump_taken;
-    
-    // Stall signals
-    always_comb begin
-        if (cp_stall) begin
-            stall_if = 1'b1;
-            stall_id = 1'b1;
-            stall_ex = 1'b1;
-            stall_mem = 1'b1;
-        end else if (load_use_hazard) begin
-            stall_if = 1'b1;
-            stall_id = 1'b1;
-            stall_ex = 1'b0;
-            stall_mem = 1'b0;
-        end else begin
-            stall_if = 1'b0;
-            stall_id = 1'b0;
-            stall_ex = 1'b0;
-            stall_mem = 1'b0;
-        end
-    end
-    
-    // Flush signals
-    always_comb begin
-        if (control_hazard) begin
-            flush_if = 1'b1;
-            flush_id = 1'b1;
-            flush_ex = 1'b0;
-        end else if (load_use_hazard) begin
-            flush_if = 1'b0;
-            flush_id = 1'b0;
-            flush_ex = 1'b1;
-        end else begin
-            flush_if = 1'b0;
-            flush_id = 1'b0;
-            flush_ex = 1'b0;
-        end
-    end
-
-endmodule
-
-module forwarding_unit #(
-    parameter REG_ADDR_WIDTH = 5
-)(
-    input  logic [REG_ADDR_WIDTH-1:0]   id_ex_rs1,
-    input  logic [REG_ADDR_WIDTH-1:0]   id_ex_rs2,
-    input  logic [REG_ADDR_WIDTH-1:0]   ex_mem_rd,
-    input  logic                         ex_mem_reg_write,
-    input  logic [REG_ADDR_WIDTH-1:0]   mem_wb_rd,
-    input  logic                         mem_wb_reg_write,
-    
-    output logic [1:0]                   forward_a,
-    output logic [1:0]                   forward_b
-);
-
-    always_comb begin
-        // Forward A logic
-        if (ex_mem_reg_write && ex_mem_rd != 0 && ex_mem_rd == id_ex_rs1)
-            forward_a = 2'b10; // Forward from EX/MEM
-        else if (mem_wb_reg_write && mem_wb_rd != 0 && mem_wb_rd == id_ex_rs1)
-            forward_a = 2'b01; // Forward from MEM/WB
-        else
-            forward_a = 2'b00; // No forwarding
-            
-        // Forward B logic
-        if (ex_mem_reg_write && ex_mem_rd != 0 && ex_mem_rd == id_ex_rs2)
-            forward_b = 2'b10; // Forward from EX/MEM
-        else if (mem_wb_reg_write && mem_wb_rd != 0 && mem_wb_rd == id_ex_rs2)
-            forward_b = 2'b01; // Forward from MEM/WB
-        else
-            forward_b = 2'b00; // No forwarding
     end
 
 endmodule

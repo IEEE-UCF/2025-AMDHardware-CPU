@@ -1,306 +1,358 @@
-module coprocessor_system #(
-    parameter ADDR_WIDTH = 64,
+module mmu #(
+    parameter VADDR_WIDTH = 32,  // Changed to 32-bit virtual addresses
+    parameter PADDR_WIDTH = 32,  // Changed to 32-bit physical addresses
     parameter DATA_WIDTH = 64,
-    parameter INST_WIDTH = 32
+    parameter TLB_ENTRIES = 16,  // Reduced TLB size to save resources
+    parameter PAGE_SIZE = 4096   // 4KB pages
 )(
     input  logic                    clk,
     input  logic                    rst_n,
     
     // CPU Interface
-    input  logic [INST_WIDTH-1:0]   instruction,
-    input  logic [DATA_WIDTH-1:0]   rs1_data,
-    input  logic [DATA_WIDTH-1:0]   rs2_data,
-    input  logic [ADDR_WIDTH-1:0]   pc,
-    input  logic                    interrupt,
+    input  logic [VADDR_WIDTH-1:0]  vaddr,
+    input  logic                    req_valid,
+    input  logic                    req_write,
+    input  logic [1:0]              req_priv,      // Privilege level (0=U, 1=S, 3=M)
+    output logic [PADDR_WIDTH-1:0] paddr,
+    output logic                    trans_valid,
+    output logic                    page_fault,
+    output logic                    access_fault,
     
-    // Result Interface
-    output logic [DATA_WIDTH-1:0]   cp_result,
-    output logic                    cp_result_valid,
-    output logic                    cp_stall,
-    output logic                    cp_detected
+    // Page Table Base Register (from CSR)
+    input  logic [PADDR_WIDTH-1:0] satp,          // Supervisor Address Translation and Protection
+    input  logic                    vm_enable,     // Virtual memory enable
+    
+    // Memory Interface for page table walks
+    output logic                    ptw_req,
+    output logic [PADDR_WIDTH-1:0] ptw_addr,
+    input  logic [DATA_WIDTH-1:0]  ptw_data,
+    input  logic                    ptw_ready,
+    
+    // TLB Management
+    input  logic                    tlb_flush,
+    input  logic                    tlb_flush_vaddr,
+    input  logic [VADDR_WIDTH-1:0] tlb_flush_addr
 );
 
-    // Instruction decode
-    logic [6:0] opcode;
-    logic [2:0] funct3;
-    logic [6:0] funct7;
-    logic [4:0] rd, rs1, rs2;
-    logic [11:0] csr_addr;
+    // For Sv32 (32-bit addressing)
+    localparam VPN_WIDTH = 20;   // Virtual Page Number width (32-bit VA / 4KB pages)
+    localparam PPN_WIDTH = 20;   // Physical Page Number width (32-bit PA / 4KB pages)
+    localparam OFFSET_WIDTH = 12; // Page offset (4KB)
     
-    assign opcode = instruction[6:0];
-    assign rd = instruction[11:7];
-    assign funct3 = instruction[14:12];
-    assign rs1 = instruction[19:15];
-    assign rs2 = instruction[24:20];
-    assign funct7 = instruction[31:25];
-    assign csr_addr = instruction[31:20];
+    // Page Table Entry (PTE) format for Sv32
+    typedef struct packed {
+        logic [11:0] ppn1;     // Physical page number[31:20]
+        logic [9:0]  ppn0;     // Physical page number[19:10]
+        logic [1:0]  rsw;      // Reserved for software
+        logic        d;        // Dirty
+        logic        a;        // Accessed
+        logic        g;        // Global
+        logic        u;        // User
+        logic        x;        // Execute
+        logic        w;        // Write
+        logic        r;        // Read
+        logic        v;        // Valid
+    } pte_t;
     
-    // Coprocessor detection and routing
-    typedef enum logic [1:0] {
-        CP_NONE = 2'b00,
-        CP_CSR  = 2'b01,  // System/CSR operations
-        CP_FPU  = 2'b10,  // Floating point
-        CP_CUSTOM = 2'b11 // Custom extensions
-    } cp_select_t;
+    // TLB Entry
+    typedef struct packed {
+        logic              valid;
+        logic [19:0]       vpn;      // Virtual page number
+        logic [19:0]       ppn;      // Physical page number
+        logic              g;        // Global
+        logic              u;        // User accessible
+        logic              x;        // Execute permission
+        logic              w;        // Write permission
+        logic              r;        // Read permission
+        logic              d;        // Dirty
+        logic              a;        // Accessed
+        logic              level;    // Page level (0=4KB, 1=4MB megapage)
+    } tlb_entry_t;
     
-    cp_select_t cp_select;
-    logic cp_valid;
+    // TLB storage
+    tlb_entry_t tlb [TLB_ENTRIES-1:0];
+    logic [$clog2(TLB_ENTRIES)-1:0] tlb_replace_idx;
     
-    // Detect coprocessor instructions
+    // VPN extraction for Sv32
+    logic [9:0]  vpn1, vpn0;  // Virtual page number components
+    logic [11:0] page_offset;
+    
+    assign vpn1 = vaddr[31:22];
+    assign vpn0 = vaddr[21:12];
+    assign page_offset = vaddr[11:0];
+    
+    // TLB lookup
+    logic tlb_hit;
+    logic [$clog2(TLB_ENTRIES)-1:0] tlb_hit_idx;
+    tlb_entry_t tlb_hit_entry;
+    
     always_comb begin
-        cp_detected = 1'b0;
-        cp_select = CP_NONE;
-        cp_valid = 1'b0;
+        tlb_hit = 1'b0;
+        tlb_hit_idx = '0;
+        tlb_hit_entry = '0;
         
-        case (opcode)
-            7'b1110011: begin // SYSTEM (CSR, ECALL, EBREAK)
-                cp_detected = 1'b1;
-                cp_select = CP_CSR;
-                cp_valid = 1'b1;
-            end
-            7'b1010011: begin // Floating Point
-                cp_detected = 1'b1;
-                cp_select = CP_FPU;
-                cp_valid = 1'b1;
-            end
-            7'b0001011, 7'b0101011: begin // Custom instructions
-                cp_detected = 1'b1;
-                cp_select = CP_CUSTOM;
-                cp_valid = 1'b1;
-            end
-            default: begin
-                cp_detected = 1'b0;
-                cp_select = CP_NONE;
-                cp_valid = 1'b0;
-            end
-        endcase
-    end
-    
-    
-    logic [DATA_WIDTH-1:0] csr_result;
-    logic csr_valid;
-    logic csr_exception;
-    
-    // CSR Registers
-    logic [DATA_WIDTH-1:0] mstatus;
-    logic [DATA_WIDTH-1:0] mie;
-    logic [DATA_WIDTH-1:0] mtvec;
-    logic [DATA_WIDTH-1:0] mepc;
-    logic [DATA_WIDTH-1:0] mcause;
-    logic [DATA_WIDTH-1:0] mtval;
-    logic [DATA_WIDTH-1:0] mip;
-    logic [63:0] cycle_count;
-    logic [63:0] instret_count;
-    
-    // CSR operations
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            mstatus <= '0;
-            mie <= '0;
-            mtvec <= '0;
-            mepc <= '0;
-            mcause <= '0;
-            mtval <= '0;
-            mip <= '0;
-            cycle_count <= '0;
-            instret_count <= '0;
-            csr_result <= '0;
-            csr_valid <= '0;
-        end else begin
-            // Increment counters
-            cycle_count <= cycle_count + 1;
-            if (cp_valid && cp_select == CP_CSR)
-                instret_count <= instret_count + 1;
-            
-            // CSR operations
-            csr_valid <= 1'b0;
-            if (cp_valid && cp_select == CP_CSR) begin
-                csr_valid <= 1'b1;
+        for (int i = 0; i < TLB_ENTRIES; i++) begin
+            if (tlb[i].valid) begin
+                logic vpn_match;
                 
-                // Read CSR
-                case (csr_addr)
-                    12'h300: csr_result <= mstatus;
-                    12'h304: csr_result <= mie;
-                    12'h305: csr_result <= mtvec;
-                    12'h341: csr_result <= mepc;
-                    12'h342: csr_result <= mcause;
-                    12'h343: csr_result <= mtval;
-                    12'h344: csr_result <= mip;
-                    12'hC00: csr_result <= cycle_count;
-                    12'hC02: csr_result <= instret_count;
-                    default: csr_result <= '0;
-                endcase
-                
-                // Write CSR (for CSRRW, CSRRS, CSRRC)
-                if (funct3[1:0] != 2'b00 && rd != 0) begin
-                    case (csr_addr)
-                        12'h300: begin
-                            case (funct3)
-                                3'b001: mstatus <= rs1_data; // CSRRW
-                                3'b010: mstatus <= mstatus | rs1_data; // CSRRS
-                                3'b011: mstatus <= mstatus & ~rs1_data; // CSRRC
-                            endcase
-                        end
-                        12'h304: begin
-                            case (funct3)
-                                3'b001: mie <= rs1_data;
-                                3'b010: mie <= mie | rs1_data;
-                                3'b011: mie <= mie & ~rs1_data;
-                            endcase
-                        end
-                        12'h305: begin
-                            case (funct3)
-                                3'b001: mtvec <= rs1_data;
-                                3'b010: mtvec <= mtvec | rs1_data;
-                                3'b011: mtvec <= mtvec & ~rs1_data;
-                            endcase
-                        end
-                        12'h341: begin
-                            case (funct3)
-                                3'b001: mepc <= rs1_data;
-                                3'b010: mepc <= mepc | rs1_data;
-                                3'b011: mepc <= mepc & ~rs1_data;
-                            endcase
-                        end
-                        12'h342: begin
-                            case (funct3)
-                                3'b001: mcause <= rs1_data;
-                                3'b010: mcause <= mcause | rs1_data;
-                                3'b011: mcause <= mcause & ~rs1_data;
-                            endcase
-                        end
-                    endcase
+                // Check VPN based on page size
+                if (tlb[i].level) begin
+                    // 4MB megapage - only check vpn1
+                    vpn_match = (tlb[i].vpn[19:10] == vpn1);
+                end else begin
+                    // 4KB page - check both vpn1 and vpn0
+                    vpn_match = (tlb[i].vpn == {vpn1, vpn0});
                 end
-            end
-            
-            // Interrupt handling
-            if (interrupt) begin
-                mip[7] <= 1'b1; // Machine timer interrupt pending
-                mcause <= 64'h8000000000000007; // Machine timer interrupt
-                mepc <= pc;
+                
+                if (vpn_match && !tlb_hit) begin
+                    tlb_hit = 1'b1;
+                    tlb_hit_idx = i[$clog2(TLB_ENTRIES)-1:0];
+                    tlb_hit_entry = tlb[i];
+                end
             end
         end
     end
     
-    logic [DATA_WIDTH-1:0] fpu_result;
-    logic fpu_valid;
-    logic fpu_busy;
-    logic [2:0] fpu_cycle_count;
+    // Permission checking
+    logic perm_valid;
     
-    // Simple FPU state machine
-    typedef enum logic [1:0] {
-        FPU_IDLE,
-        FPU_EXECUTE,
-        FPU_COMPLETE
-    } fpu_state_t;
+    always_comb begin
+        perm_valid = 1'b0;
+        
+        if (tlb_hit) begin
+            // Check if page is accessible at current privilege level
+            logic priv_ok;
+            if (req_priv == 2'b11) // Machine mode
+                priv_ok = 1'b1;
+            else if (req_priv == 2'b01) // Supervisor mode
+                priv_ok = !tlb_hit_entry.u;
+            else // User mode
+                priv_ok = tlb_hit_entry.u;
+            
+            // Check read/write/execute permissions
+            logic perm_ok;
+            if (req_write)
+                perm_ok = tlb_hit_entry.w && tlb_hit_entry.d;  // Write requires dirty bit
+            else
+                perm_ok = tlb_hit_entry.r;
+            
+            perm_valid = priv_ok && perm_ok && tlb_hit_entry.a;  // Also check accessed bit
+        end
+    end
+
+    // Page table walker state machine
+    typedef enum logic [2:0] {
+        IDLE,
+        PTW_L1,     // Level 1 (4MB pages)
+        PTW_L0,     // Level 0 (4KB pages)
+        PTW_WAIT,
+        UPDATE_TLB,
+        FAULT
+    } ptw_state_t;
     
-    fpu_state_t fpu_state;
+    ptw_state_t ptw_state, ptw_next_state;
+    pte_t pte;
+    logic ptw_level;
+    logic [PADDR_WIDTH-1:0] ptw_base;
     
+    // State machine
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            fpu_state <= FPU_IDLE;
-            fpu_result <= '0;
-            fpu_valid <= '0;
-            fpu_busy <= '0;
-            fpu_cycle_count <= '0;
+            ptw_state <= IDLE;
+            ptw_level <= '0;
+            ptw_base <= '0;
+            pte <= '0;
         end else begin
-            case (fpu_state)
-                FPU_IDLE: begin
-                    fpu_valid <= 1'b0;
-                    if (cp_valid && cp_select == CP_FPU) begin
-                        fpu_state <= FPU_EXECUTE;
-                        fpu_busy <= 1'b1;
-                        fpu_cycle_count <= 3'd3; // 3 cycles for FP ops
+            ptw_state <= ptw_next_state;
+            
+            case (ptw_state)
+                IDLE: begin
+                    if (!tlb_hit && req_valid && vm_enable) begin
+                        // Extract page table base from satp (bits 31:12 contain PPN)
+                        ptw_base <= {satp[31:12], 12'b0};
+                        ptw_level <= 1'b1; // Start at level 1
                     end
                 end
                 
-                FPU_EXECUTE: begin
-                    if (fpu_cycle_count > 0) begin
-                        fpu_cycle_count <= fpu_cycle_count - 1;
-                    end else begin
-                        fpu_state <= FPU_COMPLETE;
-                        // Simplified FPU operations
-                        case (funct7)
-                            7'b0000000: fpu_result <= rs1_data + rs2_data; // FADD (simplified)
-                            7'b0000100: fpu_result <= rs1_data - rs2_data; // FSUB (simplified)
-                            7'b0001000: fpu_result <= rs1_data; // FMUL (placeholder)
-                            7'b0001100: fpu_result <= rs1_data; // FDIV (placeholder)
-                            7'b1010000: begin // FEQ, FLT, FLE
-                                case (funct3)
-                                    3'b010: fpu_result <= (rs1_data == rs2_data) ? 1 : 0; // FEQ
-                                    3'b001: fpu_result <= ($signed(rs1_data) < $signed(rs2_data)) ? 1 : 0; // FLT
-                                    3'b000: fpu_result <= ($signed(rs1_data) <= $signed(rs2_data)) ? 1 : 0; // FLE
-                                    default: fpu_result <= '0;
-                                endcase
-                            end
-                            default: fpu_result <= rs1_data; // Pass through
-                        endcase
+                PTW_L1: begin
+                    // Index into first-level page table
+                    ptw_addr <= ptw_base + (vpn1 << 2);  // Each PTE is 4 bytes
+                end
+                
+                PTW_L0: begin
+                    // Index into second-level page table
+                    ptw_addr <= {pte.ppn1, pte.ppn0, 12'b0} + (vpn0 << 2);
+                    ptw_level <= 1'b0;
+                end
+                
+                PTW_WAIT: begin
+                    if (ptw_ready) begin
+                        pte <= ptw_data[31:0];  // PTE is 32 bits in Sv32
                     end
                 end
                 
-                FPU_COMPLETE: begin
-                    fpu_valid <= 1'b1;
-                    fpu_busy <= 1'b0;
-                    fpu_state <= FPU_IDLE;
+                UPDATE_TLB: begin
+                    // Update TLB with new entry
+                    tlb[tlb_replace_idx].valid <= 1'b1;
+                    tlb[tlb_replace_idx].vpn <= {vpn1, vpn0};
+                    tlb[tlb_replace_idx].ppn <= {pte.ppn1, pte.ppn0};
+                    tlb[tlb_replace_idx].g <= pte.g;
+                    tlb[tlb_replace_idx].u <= pte.u;
+                    tlb[tlb_replace_idx].x <= pte.x;
+                    tlb[tlb_replace_idx].w <= pte.w;
+                    tlb[tlb_replace_idx].r <= pte.r;
+                    tlb[tlb_replace_idx].d <= pte.d;
+                    tlb[tlb_replace_idx].a <= pte.a;
+                    tlb[tlb_replace_idx].level <= ptw_level;
+                    
+                    // Simple round-robin replacement
+                    tlb_replace_idx <= tlb_replace_idx + 1;
                 end
             endcase
         end
     end
     
-    logic [DATA_WIDTH-1:0] custom_result;
-    logic custom_valid;
-    
+    // Next state logic
+    always_comb begin
+        ptw_next_state = ptw_state;
+        ptw_req = 1'b0;
+        
+        case (ptw_state)
+            IDLE: begin
+                if (!tlb_hit && req_valid && vm_enable) begin
+                    ptw_next_state = PTW_L1;
+                end
+            end
+            
+            PTW_L1, PTW_L0: begin
+                ptw_req = 1'b1;
+                ptw_next_state = PTW_WAIT;
+            end
+            
+            PTW_WAIT: begin
+                if (ptw_ready) begin
+                    if (!pte.v) begin
+                        // Invalid PTE
+                        ptw_next_state = FAULT;
+                    end else if (!pte.r && !pte.w && !pte.x) begin
+                        // Pointer to next level
+                        if (ptw_level == 1'b1) begin
+                            ptw_next_state = PTW_L0;
+                        end else begin
+                            ptw_next_state = FAULT;  // Invalid at level 0
+                        end
+                    end else begin
+                        // Valid leaf PTE
+                        ptw_next_state = UPDATE_TLB;
+                    end
+                end
+            end
+            
+            UPDATE_TLB: begin
+                ptw_next_state = IDLE;
+            end
+            
+            FAULT: begin
+                ptw_next_state = IDLE;
+            end
+        endcase
+    end
+
+    // TLB flush logic
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            custom_result <= '0;
-            custom_valid <= '0;
+            for (int i = 0; i < TLB_ENTRIES; i++) begin
+                tlb[i].valid <= 1'b0;
+            end
+            tlb_replace_idx <= '0;
         end else begin
-            custom_valid <= 1'b0;
-            if (cp_valid && cp_select == CP_CUSTOM) begin
-                custom_valid <= 1'b1;
-                // Simple custom operations
-                case (funct3)
-                    3'b000: custom_result <= rs1_data & rs2_data; // Custom AND
-                    3'b001: custom_result <= rs1_data | rs2_data; // Custom OR
-                    3'b010: custom_result <= rs1_data ^ rs2_data; // Custom XOR
-                    3'b011: custom_result <= rs1_data + rs2_data; // Custom ADD
-                    3'b100: custom_result <= rs1_data << rs2_data[5:0]; // Custom SLL
-                    3'b101: custom_result <= rs1_data >> rs2_data[5:0]; // Custom SRL
-                    3'b110: custom_result <= rs1_data * rs2_data; // Custom MUL
-                    3'b111: custom_result <= rs1_data; // Custom PASS
-                    default: custom_result <= '0;
-                endcase
+            if (tlb_flush) begin
+                if (tlb_flush_vaddr) begin
+                    // Flush specific address
+                    for (int i = 0; i < TLB_ENTRIES; i++) begin
+                        if (tlb[i].valid && tlb[i].vpn == tlb_flush_addr[31:12]) begin
+                            tlb[i].valid <= 1'b0;
+                        end
+                    end
+                end else begin
+                    // Flush entire TLB
+                    for (int i = 0; i < TLB_ENTRIES; i++) begin
+                        tlb[i].valid <= 1'b0;
+                    end
+                end
             end
         end
     end
     
+    // Output logic
     always_comb begin
-        cp_result = '0;
-        cp_result_valid = 1'b0;
-        cp_stall = 1'b0;
-        
-        case (cp_select)
-            CP_CSR: begin
-                cp_result = csr_result;
-                cp_result_valid = csr_valid;
-                cp_stall = 1'b0; // CSR ops complete in 1 cycle
+        if (!vm_enable) begin
+            // Virtual memory disabled - direct mapping
+            paddr = vaddr;
+            trans_valid = req_valid;
+            page_fault = 1'b0;
+            access_fault = 1'b0;
+        end else if (tlb_hit) begin
+            // TLB hit - translate address
+            if (tlb_hit_entry.level) begin
+                // 4MB megapage
+                paddr = {tlb_hit_entry.ppn[19:10], vpn0, page_offset};
+            end else begin
+                // 4KB page
+                paddr = {tlb_hit_entry.ppn, page_offset};
             end
-            CP_FPU: begin
-                cp_result = fpu_result;
-                cp_result_valid = fpu_valid;
-                cp_stall = fpu_busy;
+            trans_valid = perm_valid;
+            page_fault = !tlb_hit_entry.valid;
+            access_fault = !perm_valid;
+        end else if (ptw_state == UPDATE_TLB) begin
+            // Just completed page table walk
+            if (ptw_level) begin
+                // 4MB megapage
+                paddr = {pte.ppn1, vpn0, page_offset};
+            end else begin
+                // 4KB page
+                paddr = {pte.ppn1, pte.ppn0, page_offset};
             end
-            CP_CUSTOM: begin
-                cp_result = custom_result;
-                cp_result_valid = custom_valid;
-                cp_stall = 1'b0; // Custom ops complete in 1 cycle
-            end
-            default: begin
-                cp_result = '0;
-                cp_result_valid = 1'b0;
-                cp_stall = 1'b0;
-            end
-        endcase
+            trans_valid = 1'b1;
+            page_fault = 1'b0;
+            access_fault = 1'b0;
+        end else if (ptw_state == FAULT) begin
+            // Page table walk failed
+            paddr = '0;
+            trans_valid = 1'b0;
+            page_fault = 1'b1;
+            access_fault = 1'b0;
+        end else begin
+            // Miss or walking
+            paddr = '0;
+            trans_valid = 1'b0;
+            page_fault = 1'b0;
+            access_fault = 1'b0;
+        end
     end
+    
+    // Debug counters
+    `ifdef DEBUG
+    logic [31:0] tlb_hits;
+    logic [31:0] tlb_misses;
+    logic [31:0] page_faults_count;
+    
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            tlb_hits <= '0;
+            tlb_misses <= '0;
+            page_faults_count <= '0;
+        end else begin
+            if (req_valid && vm_enable) begin
+                if (tlb_hit)
+                    tlb_hits <= tlb_hits + 1;
+                else
+                    tlb_misses <= tlb_misses + 1;
+            end
+            if (page_fault)
+                page_faults_count <= page_faults_count + 1;
+        end
+    end
+    `endif
 
 endmodule
