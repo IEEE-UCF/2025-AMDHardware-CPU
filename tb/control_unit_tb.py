@@ -2,14 +2,11 @@ import cocotb
 import random
 from cocotb.triggers import Timer
 
-# RISC-V RV64I ISA Specification-based Control Unit Test
+# RISC-V RV32I ISA Specification-based Control Unit Test
 # This testbench is based on the official RISC-V ISA specification, not implementation details
 
 
-class RV64IInstruction:
-    """RISC-V RV64I Instruction encoder/decoder based on ISA specification"""
-
-    # RISC-V RV64I Opcodes (from ISA spec)
+class RV32IInstruction:
     OP_LUI = 0b0110111  # Load Upper Immediate
     OP_AUIPC = 0b0010111  # Add Upper Immediate to PC
     OP_JAL = 0b1101111  # Jump and Link
@@ -21,16 +18,12 @@ class RV64IInstruction:
     OP_OP = 0b0110011  # Integer Register-Register instructions
     OP_FENCE = 0b0001111  # Memory ordering
     OP_SYSTEM = 0b1110011  # Environment call and breakpoints
-
-    # Instruction format types (from ISA spec)
     FMT_R = "R"  # Register-Register
     FMT_I = "I"  # Register-Immediate
     FMT_S = "S"  # Store
     FMT_B = "B"  # Branch
     FMT_U = "U"  # Upper Immediate
     FMT_J = "J"  # Jump
-
-    # Immediate types for control unit
     IMM_I = 0b00
     IMM_S = 0b01
     IMM_B = 0b10
@@ -39,7 +32,6 @@ class RV64IInstruction:
 
     @staticmethod
     def encode_r_type(opcode, rd, funct3, rs1, rs2, funct7):
-        """Encode R-type instruction"""
         return (
             (funct7 << 25)
             | (rs2 << 20)
@@ -51,12 +43,10 @@ class RV64IInstruction:
 
     @staticmethod
     def encode_i_type(opcode, rd, funct3, rs1, imm):
-        """Encode I-type instruction"""
         return ((imm & 0xFFF) << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | opcode
 
     @staticmethod
     def encode_s_type(opcode, funct3, rs1, rs2, imm):
-        """Encode S-type instruction"""
         return (
             (((imm >> 5) & 0x7F) << 25)
             | (rs2 << 20)
@@ -68,7 +58,6 @@ class RV64IInstruction:
 
     @staticmethod
     def encode_b_type(opcode, funct3, rs1, rs2, imm):
-        """Encode B-type instruction"""
         return (
             (((imm >> 12) & 1) << 31)
             | (((imm >> 5) & 0x3F) << 25)
@@ -82,12 +71,10 @@ class RV64IInstruction:
 
     @staticmethod
     def encode_u_type(opcode, rd, imm):
-        """Encode U-type instruction"""
         return (imm & 0xFFFFF000) | (rd << 7) | opcode
 
     @staticmethod
     def encode_j_type(opcode, rd, imm):
-        """Encode J-type instruction"""
         return (
             (((imm >> 20) & 1) << 31)
             | (((imm >> 1) & 0x3FF) << 21)
@@ -98,15 +85,11 @@ class RV64IInstruction:
         )
 
 
-class RV64IControlUnitSpec:
-    """RISC-V RV64I Control Unit Expected Behavior based on ISA"""
-
+class RV32IControlUnitSpec:
     def __init__(self):
-        self.instr = RV64IInstruction()
+        self.instr = RV32IInstruction()
 
     def get_expected_controls(self, opcode, funct3=0, funct7=0):
-        """Get expected control signals based on RISC-V ISA specification"""
-
         expected = {
             "reg_write": 0,  # Does instruction write to register?
             "mem_read": 0,  # Does instruction read from memory?
@@ -196,10 +179,8 @@ class RV64IControlUnitSpec:
 
 @cocotb.test()
 async def test_risc_v_control_unit_compliance(dut):
-    """Test control unit compliance with RISC-V RV64I ISA specification"""
-
-    instr = RV64IInstruction()
-    spec = RV64IControlUnitSpec()
+    instr = RV32IInstruction()
+    spec = RV32IControlUnitSpec()
 
     # Test instruction valid = 0
     dut.inst_valid.value = 0
@@ -211,7 +192,7 @@ async def test_risc_v_control_unit_compliance(dut):
     assert int(dut.mem_read.value) == 0, "mem_read should be 0 when inst_valid is 0"
     assert int(dut.mem_write.value) == 0, "mem_write should be 0 when inst_valid is 0"
 
-    dut._log.info("=== Testing RISC-V RV64I Control Unit ISA Compliance ===")
+    dut._log.info("=== Testing RISC-V RV32I Control Unit ISA Compliance ===")
 
     # Test each instruction type systematically
     test_cases = []
@@ -313,7 +294,7 @@ async def test_risc_v_control_unit_compliance(dut):
             rd = random.randint(0, 31)
             rs1 = random.randint(0, 31)
             if funct3 in [0b001, 0b101]:  # Shift instructions
-                imm = random.randint(0, 63)  # 6-bit shift amount for RV64
+                imm = random.randint(0, 31)  # 6-bit shift amount for RV32
             else:
                 imm = random.randint(-2048, 2047)
             instruction = instr.encode_i_type(instr.OP_OP_IMM, rd, funct3, rs1, imm)
@@ -418,7 +399,7 @@ async def test_risc_v_control_unit_compliance(dut):
     dut._log.info(f"Failed: {failures}")
 
     if failures == 0:
-        dut._log.info("✓ Control Unit is RISC-V RV64I ISA compliant!")
+        dut._log.info("✓ Control Unit is RISC-V RV32I ISA compliant!")
     else:
         dut._log.error("✗ Control Unit has ISA compliance issues")
         assert False, f"Control unit failed {failures} ISA compliance tests"
@@ -426,8 +407,6 @@ async def test_risc_v_control_unit_compliance(dut):
 
 @cocotb.test()
 async def test_nop_instruction(dut):
-    """Test the canonical NOP instruction (ADDI x0, x0, 0)"""
-
     # NOP = ADDI x0, x0, 0 = 0x00000013
     nop_instruction = 0x00000013
 
