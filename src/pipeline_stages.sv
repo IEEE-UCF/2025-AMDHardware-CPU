@@ -50,9 +50,11 @@ module stage_if  #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, PC_TYPE_NUM = 4)(
                            .Data_out(inst_word)
                           );
 
-    assign inst_valid = (pc_sel == 2'b00);
-    assign pc = pc_curr;
-    assign pc4 = pc_next_options[0];
+    assign inst_valid       = (pc_sel == 2'b00);
+    assign pc               = pc_curr;
+    assign pc4              = pc_next_options[0];
+    assign inst_buffer_empty = 1'b0;
+    assign inst_buffer_full  = 1'b0;
 endmodule
 
 module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, REG_NUM = 32) (
@@ -78,9 +80,11 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, REG_NUM = 32) (
     input  wire [$clog2(REG_NUM)-1:0]     load_rd,
     input  wire                           is_load,
     input  wire [$clog2(REG_NUM)-1:0]     w_rd,
-    input  wire [$clog2(REG_NUM)-1:0]     w_rd_gpu,
-    input  wire [$clog2(REG_NUM)-1:0]     rs_gpu,
-    input  wire [$clog2(REG_NUM)-1:0]     ex_pro_rs,
+    input  wire                           ex_wr_reg_en,
+    input  wire                           mm_wr_reg_en,
+    input  wire                           mm_is_load,
+    input  wire [$clog2(REG_NUM)-1:0]     ex_rd,
+    input  wire [$clog2(REG_NUM)-1:0]     mm_rd,
     input  wire [$clog2(REG_NUM)-1:0]     mm_pro_rs,
     input  wire [$clog2(REG_NUM)-1:0]     mm_mem_rs,
     output wire                           is_equal,
@@ -175,25 +179,32 @@ module stage_id #(parameter ADDR_WIDTH = 64, INST_WIDTH = 32, REG_NUM = 32) (
                                       .data_out_gpu(read_out_gpu)
                                      );
     
-    bypass_mux a_bypass (.file_out(a_file_out),
+    bypass_mux a_bypass (
+                             .ex_wr_reg_en(ex_wr_reg_en),
+                             .mm_wr_reg_en(mm_wr_reg_en),
+                             .mm_is_load(mm_is_load),
+                             .file_out(a_file_out),
                              .ex_pro(ex_pro),
                              .mm_pro(mm_pro),
                              .mm_mem(mm_mem),
                              .file_out_rs(d_inst[19:15]),
-                             .ex_pro_rs(ex_pro_rs),
-                             .mm_pro_rs(mm_pro_rs),
-                             .mm_mem_rs(mm_mem_rs),
+                             .ex_rd(ex_rd),
+                             .mm_rd(mm_rd),
                              .bypass_out(a_out)
                              );
     
-    bypass_mux b_bypass (.file_out(b_file_out),
+
+    bypass_mux b_bypass (
+                             .ex_wr_reg_en(ex_wr_reg_en),
+                             .mm_wr_reg_en(mm_wr_reg_en),
+                             .mm_is_load(mm_is_load),
+                             .file_out(b_file_out),
                              .ex_pro(ex_pro),
                              .mm_pro(mm_pro),
                              .mm_mem(mm_mem),
                              .file_out_rs(d_inst[24:20]),
-                             .ex_pro_rs(ex_pro_rs),
-                             .mm_pro_rs(mm_pro_rs),
-                             .mm_mem_rs(mm_mem_rs),
+                             .ex_rd(ex_rd),
+                             .mm_rd(mm_rd),
                              .bypass_out(b_out_options[0])
                              );
 
@@ -336,4 +347,123 @@ module pl_stage_wb #(parameter DATA_WIDTH = 64)(
     // 2-to-1 mux for write-back data selection
     assign wdata = wmem2reg ? wmem : walu;
 
+endmodule
+
+// Pipeline support modules
+module reg_if #(parameter ADDR_WIDTH = 64) (
+    input  wire                     clk,
+    input  wire                     reset,
+    input  wire                     stall,
+    input  wire [ADDR_WIDTH-1:0]    pc_next,
+    output reg  [ADDR_WIDTH-1:0]    pc_reg
+);
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) begin
+            pc_reg <= '0;
+        end else if (!stall) begin
+            pc_reg <= pc_next;
+        end
+    end
+endmodule
+
+module memory_instruction #(
+    parameter INST_WIDTH = 32,
+    parameter X_WIDTH = 4,
+    parameter Y_WIDTH = 4
+) (
+    input  wire                    Clock,
+    input  wire                    WriteEnable,
+    input  wire [X_WIDTH-1:0]      X_addr,
+    input  wire [Y_WIDTH-1:0]      Y_addr,
+    input  wire [INST_WIDTH-1:0]   Data_in,
+    output wire [INST_WIDTH-1:0]   Data_out
+);
+    localparam DEPTH = 1 << (X_WIDTH + Y_WIDTH);
+    reg [INST_WIDTH-1:0] mem [0:DEPTH-1];
+    wire [X_WIDTH+Y_WIDTH-1:0] addr = {Y_addr, X_addr};
+
+    always_ff @(posedge Clock) begin
+        if (WriteEnable) begin
+            mem[addr] <= Data_in;
+        end
+    end
+
+    assign Data_out = mem[addr];
+endmodule
+
+module reg_if_to_id #(
+    parameter ADDR_WIDTH = 64,
+    parameter INST_WIDTH = 32
+) (
+    input  wire                     clk,
+    input  wire                     reset,
+    input  wire                     stall,
+    input  wire [ADDR_WIDTH-1:0]    pc4,
+    input  wire [ADDR_WIDTH-1:0]    pc,
+    input  wire [INST_WIDTH-1:0]    inst,
+    output reg                      inst_buffer_empty,
+    output reg                      inst_buffer_full,
+    output reg [ADDR_WIDTH-1:0]     d_pc,
+    output reg [ADDR_WIDTH-1:0]     d_pc4,
+    output reg [INST_WIDTH-1:0]     d_inst
+);
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) begin
+            d_pc  <= '0;
+            d_pc4 <= '0;
+            d_inst <= '0;
+            inst_buffer_empty <= 1'b1;
+            inst_buffer_full  <= 1'b0;
+        end else if (!stall) begin
+            d_pc  <= pc;
+            d_pc4 <= pc4;
+            d_inst <= inst;
+            inst_buffer_empty <= 1'b0;
+            inst_buffer_full  <= 1'b0;
+        end
+    end
+endmodule
+
+module register_bank_list #(
+    parameter REG_NUM = 32,
+    parameter DATA_WIDTH = 64
+) (
+    input  wire                       clk,
+    input  wire                       reset,
+    input  wire                       interrupt,
+    input  wire [$clog2(REG_NUM)-1:0] write_addr_cpu,
+    input  wire [$clog2(REG_NUM)-1:0] write_addr_gpu,
+    input  wire [DATA_WIDTH-1:0]      data_in_cpu,
+    input  wire [DATA_WIDTH-1:0]      data_in_gpu,
+    input  wire                       write_en_cpu,
+    input  wire                       write_en_gpu,
+    input  wire [$clog2(REG_NUM)-1:0] read_addr_a,
+    input  wire [$clog2(REG_NUM)-1:0] read_addr_b,
+    input  wire [$clog2(REG_NUM)-1:0] read_addr_gpu,
+    output wire [DATA_WIDTH-1:0]      data_out_a,
+    output wire [DATA_WIDTH-1:0]      data_out_b,
+    output wire [DATA_WIDTH-1:0]      data_out_gpu
+);
+    reg [DATA_WIDTH-1:0] cpu_regs [0:REG_NUM-1];
+    reg [DATA_WIDTH-1:0] gpu_regs [0:REG_NUM-1];
+    integer i;
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) begin
+            for (i = 0; i < REG_NUM; i++) begin
+                cpu_regs[i] <= '0;
+                gpu_regs[i] <= '0;
+            end
+        end else begin
+            if (write_en_cpu && write_addr_cpu != 0) begin
+                cpu_regs[write_addr_cpu] <= data_in_cpu;
+            end
+            if (write_en_gpu && write_addr_gpu != 0) begin
+                gpu_regs[write_addr_gpu] <= data_in_gpu;
+            end
+        end
+    end
+
+    assign data_out_a   = (read_addr_a  == 0) ? '0 : cpu_regs[read_addr_a];
+    assign data_out_b   = (read_addr_b  == 0) ? '0 : cpu_regs[read_addr_b];
+    assign data_out_gpu = (read_addr_gpu== 0) ? '0 : gpu_regs[read_addr_gpu];
 endmodule
