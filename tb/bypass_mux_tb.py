@@ -6,7 +6,7 @@ from typing import List
 from abc import ABC, abstractmethod
 
 """
-RISC-V RV64I ISA Bypass/Forwarding Testbench
+RISC-V RV32I ISA Bypass/Forwarding Testbench
 UML-based Object-Oriented Design
 
 This testbench uses UML design patterns to model RISC-V pipeline 
@@ -430,7 +430,7 @@ class RISCVTestSuite:
 async def test_risc_v_uml_bypass_compliance(dut):
     """UML-based test for RISC-V bypass multiplexer compliance"""
 
-    dut._log.info("=== UML-based RISC-V RV64I Bypass Multiplexer Test ===")
+    dut._log.info("=== UML-based RISC-V RV32I Bypass Multiplexer Test ===")
 
     # Initialize UML components
     simulator = RISCVPipelineSimulator()
@@ -512,7 +512,7 @@ async def test_risc_v_uml_bypass_compliance(dut):
     dut._log.info(f"Success rate: {(passed_tests / total_tests * 100):.1f}%")
 
     if failed_tests == 0:
-        dut._log.info("✓ Bypass multiplexer is RISC-V RV64I UML-model compliant!")
+        dut._log.info("✓ Bypass multiplexer is RISC-V RV32UML-model compliant!")
     else:
         dut._log.error("✗ Bypass multiplexer failed UML-based compliance tests")
         assert False, (
