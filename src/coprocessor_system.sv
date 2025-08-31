@@ -14,7 +14,7 @@ module coprocessor_system #(
     input logic [DATA_WIDTH-1:0] rs1_data,
     input logic [DATA_WIDTH-1:0] rs2_data,
     input logic [ADDR_WIDTH-1:0] pc,
-    input logic                  interrupt,
+    input logic irq_signal,  // Renamed from 'interrupt' to avoid C++ reserved word
 
     // Result Interface
     output logic [DATA_WIDTH-1:0] cp_result,
@@ -153,7 +153,7 @@ module coprocessor_system #(
       if (cp_valid && cp_select == CP_CSR) begin
         csr_valid <= 1'b1;
 
-        // Read CSR
+        // Read CSR - with default case to handle all addresses
         case (csr_addr)
           CSR_MSTATUS:  csr_result <= mstatus;
           CSR_MISA:     csr_result <= misa;
@@ -168,7 +168,7 @@ module coprocessor_system #(
           CSR_CYCLEH:   csr_result <= cycle_count[63:32];
           CSR_INSTRET:  csr_result <= instret_count[31:0];
           CSR_INSTRETH: csr_result <= instret_count[63:32];
-          default:      csr_result <= '0;
+          default:      csr_result <= '0;  // Return 0 for unimplemented CSRs
         endcase
 
         // Write CSR (for CSRRW, CSRRS, CSRRC)
@@ -187,7 +187,7 @@ module coprocessor_system #(
             default: new_value = csr_result;
           endcase
 
-          // Write to appropriate CSR
+          // Write to appropriate CSR - with default case
           case (csr_addr)
             CSR_MSTATUS:  mstatus <= new_value;
             CSR_MIE:      mie <= new_value;
@@ -196,7 +196,7 @@ module coprocessor_system #(
             CSR_MEPC:     mepc <= new_value;
             CSR_MCAUSE:   mcause <= new_value;
             CSR_MTVAL:    mtval <= new_value;
-            // Note: MISA, MIP are typically read-only
+            default:      ;  // Ignore writes to unimplemented or read-only CSRs
           endcase
         end
 
@@ -219,7 +219,7 @@ module coprocessor_system #(
       end
 
       // Interrupt handling
-      if (interrupt && mie[7] && mstatus[3]) begin  // Machine timer interrupt
+      if (irq_signal && mie[7] && mstatus[3]) begin  // Machine timer interrupt
         mip[7]     <= 1'b1;
         mcause     <= 32'h80000007;  // Machine timer interrupt (bit 31 set)
         mepc       <= pc;
@@ -238,9 +238,10 @@ module coprocessor_system #(
   logic [2:0] mul_cycle_count;
 
   typedef enum logic [1:0] {
-    MUL_IDLE,
-    MUL_EXECUTE,
-    MUL_COMPLETE
+    MUL_IDLE = 2'b00,
+    MUL_EXECUTE = 2'b01,
+    MUL_COMPLETE = 2'b10,
+    MUL_RESERVED = 2'b11  // Added to cover all enum values
   } mul_state_t;
 
   mul_state_t mul_state;
@@ -319,6 +320,12 @@ module coprocessor_system #(
           mul_busy  <= 1'b0;
           mul_state <= MUL_IDLE;
         end
+
+        default: begin  // MUL_RESERVED - should never reach here
+          mul_state <= MUL_IDLE;
+          mul_valid <= 1'b0;
+          mul_busy  <= 1'b0;
+        end
       endcase
     end
   end
@@ -372,7 +379,7 @@ module coprocessor_system #(
             int j;
             count = 0;
             for (j = 0; j < 32; j++) begin
-              count += rs1_data[j];
+              count += 32'(rs1_data[j]);  // Fixed: Explicit width cast to 32 bits
             end
             custom_result <= count;
           end
