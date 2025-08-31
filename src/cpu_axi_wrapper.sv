@@ -2,7 +2,7 @@ module cpu_axi_wrapper #(
     parameter C_S_AXI_DATA_WIDTH = 32,
     parameter C_S_AXI_ADDR_WIDTH = 32,
     parameter ADDR_WIDTH = 32,
-    parameter DATA_WIDTH = 64,
+    parameter DATA_WIDTH = 32,
     parameter INST_WIDTH = 32,
     parameter REG_NUM = 32
 )(
@@ -50,7 +50,7 @@ module cpu_axi_wrapper #(
     output logic [DATA_WIDTH-1:0]              dmem_write_data,
     output logic                               dmem_read,
     output logic                               dmem_write,
-    output logic [7:0]                         dmem_byte_enable,
+    output logic [3:0]                         dmem_byte_enable,  // Changed from 8 to 4 bytes for 32-bit
     input  logic [DATA_WIDTH-1:0]              dmem_read_data,
     input  logic                               dmem_ready,
     
@@ -60,27 +60,6 @@ module cpu_axi_wrapper #(
     output logic                               cpu_active
 );
 
-    // CPU Control/Status Register Map (via AXI)
-    // 0x00: Control Register (R/W)
-    //       [0] - CPU Enable
-    //       [1] - CPU Reset (self-clearing)
-    //       [2] - Single Step Mode
-    //       [3] - Interrupt Enable
-    //       [31:4] - Reserved
-    // 0x04: Status Register (RO)
-    //       [0] - CPU Running
-    //       [1] - CPU Halted
-    //       [2] - Debug Stall
-    //       [3] - Interrupt Pending
-    //       [31:4] - Reserved
-    // 0x08: Program Counter (RO)
-    // 0x0C: Instruction Count Low (RO)
-    // 0x10: Instruction Count High (RO)
-    // 0x14: Cycle Count Low (RO)
-    // 0x18: Cycle Count High (RO)
-    // 0x1C: Breakpoint Address (R/W)
-    // 0x20-0x9C: General Purpose Registers R0-R31 (RO)
-    
     // Control Registers
     logic cpu_enable;
     logic cpu_reset_req;
@@ -92,16 +71,18 @@ module cpu_axi_wrapper #(
     logic [31:0] cpu_pc;
     logic cpu_stall;
     logic [3:0] cpu_state;
-    logic [63:0] cycle_count;
-    logic [63:0] instruction_count;
-    logic [31:0] gpr_data [0:31];  // General purpose registers readback
+    logic [31:0] cycle_count_low;   // Changed to 32-bit counters
+    logic [31:0] cycle_count_high;
+    logic [31:0] instruction_count_low;
+    logic [31:0] instruction_count_high;
+    logic [31:0] gpr_data [0:31];
     
     // CPU control signals
     logic cpu_clk;
     logic cpu_rst_n;
     
-    // Generate CPU clock (can be replaced with external PLL)
-    assign cpu_clk = s_axi_aclk;  // For now, use same clock
+    // Generate CPU clock
+    assign cpu_clk = s_axi_aclk;
     
     // CPU reset logic
     logic [3:0] reset_counter;
@@ -169,7 +150,10 @@ module cpu_axi_wrapper #(
         .cp_stall_external(1'b0)
     );
     
-    // Performance counters
+    // Performance counters (32-bit)
+    logic [63:0] cycle_count;
+    logic [63:0] instruction_count;
+    
     always_ff @(posedge cpu_clk or negedge cpu_rst_n) begin
         if (!cpu_rst_n) begin
             cycle_count <= '0;
@@ -181,6 +165,11 @@ module cpu_axi_wrapper #(
             end
         end
     end
+    
+    assign cycle_count_low = cycle_count[31:0];
+    assign cycle_count_high = cycle_count[63:32];
+    assign instruction_count_low = instruction_count[31:0];
+    assign instruction_count_high = instruction_count[63:32];
     
     // AXI4-Lite Control Interface State Machine
     typedef enum logic [1:0] {
@@ -208,30 +197,26 @@ module cpu_axi_wrapper #(
             axi_write_ready <= 1'b0;
             s_axi_bvalid <= 1'b0;
         end else begin
-            // Clear single-pulse signals
             cpu_reset_req <= 1'b0;
             
-            // AXI write address handshake
             if (s_axi_awvalid && s_axi_awready) begin
                 axi_awaddr_reg <= s_axi_awaddr;
             end
             
-            // AXI write data handshake
             if (s_axi_wvalid && s_axi_wready) begin
                 case (axi_awaddr_reg[7:0])
-                    8'h00: begin  // Control Register
+                    8'h00: begin
                         cpu_enable <= s_axi_wdata[0];
                         cpu_reset_req <= s_axi_wdata[1];
                         single_step_mode <= s_axi_wdata[2];
                         interrupt_enable <= s_axi_wdata[3];
                     end
                     8'h1C: breakpoint_addr <= s_axi_wdata;
-                    default: ; // Read-only or reserved
+                    default: ;
                 endcase
                 s_axi_bvalid <= 1'b1;
             end
             
-            // AXI write response handshake
             if (s_axi_bvalid && s_axi_bready) begin
                 s_axi_bvalid <= 1'b0;
             end
@@ -245,34 +230,30 @@ module cpu_axi_wrapper #(
             axi_read_valid <= 1'b0;
             axi_read_data <= '0;
         end else begin
-            // AXI read address handshake
             if (s_axi_arvalid && s_axi_arready) begin
                 axi_araddr_reg <= s_axi_araddr;
                 axi_read_valid <= 1'b1;
                 
-                // Decode read address
                 case (s_axi_araddr[7:0])
                     8'h00: axi_read_data <= {28'b0, interrupt_enable, single_step_mode, cpu_reset_req, cpu_enable};
                     8'h04: axi_read_data <= {28'b0, interrupt_sync[2], cpu_stall, cpu_state[0], cpu_rst_n};
                     8'h08: axi_read_data <= cpu_pc;
-                    8'h0C: axi_read_data <= instruction_count[31:0];
-                    8'h10: axi_read_data <= instruction_count[63:32];
-                    8'h14: axi_read_data <= cycle_count[31:0];
-                    8'h18: axi_read_data <= cycle_count[63:32];
+                    8'h0C: axi_read_data <= instruction_count_low;
+                    8'h10: axi_read_data <= instruction_count_high;
+                    8'h14: axi_read_data <= cycle_count_low;
+                    8'h18: axi_read_data <= cycle_count_high;
                     8'h1C: axi_read_data <= breakpoint_addr;
-                    // GPR reads (0x20-0x9C)
                     default: begin
                         if (s_axi_araddr[7:0] >= 8'h20 && s_axi_araddr[7:0] <= 8'h9C) begin
                             logic [4:0] reg_idx = (s_axi_araddr[7:0] - 8'h20) >> 2;
                             axi_read_data <= gpr_data[reg_idx];
                         end else begin
-                            axi_read_data <= 32'hDEADBEEF;  // Invalid address
+                            axi_read_data <= 32'hDEADBEEF;
                         end
                     end
                 endcase
             end
             
-            // AXI read data handshake
             if (s_axi_rvalid && s_axi_rready) begin
                 axi_read_valid <= 1'b0;
             end
@@ -282,11 +263,11 @@ module cpu_axi_wrapper #(
     // AXI4-Lite Interface Assignments
     assign s_axi_awready = (axi_state == AXI_IDLE);
     assign s_axi_wready = (axi_state == AXI_IDLE) || (s_axi_awvalid && s_axi_awready);
-    assign s_axi_bresp = 2'b00;  // OKAY response
+    assign s_axi_bresp = 2'b00;
     
     assign s_axi_arready = (axi_state == AXI_IDLE) && !s_axi_awvalid;
     assign s_axi_rdata = axi_read_data;
-    assign s_axi_rresp = 2'b00;  // OKAY response
+    assign s_axi_rresp = 2'b00;
     assign s_axi_rvalid = axi_read_valid;
     
     // Debug outputs

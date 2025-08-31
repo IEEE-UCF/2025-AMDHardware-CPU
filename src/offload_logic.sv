@@ -1,10 +1,6 @@
-// Enhanced Offload Manager
-// Integrates dispatcher, stall handler, and destination table for complete offload management
-// Provides unified interface for CPU pipeline integration
-
 module offload_manager #(
-    parameter ADDR_WIDTH = 64,
-    parameter DATA_WIDTH = 64,
+    parameter ADDR_WIDTH = 32,  // Changed from 64 to 32
+    parameter DATA_WIDTH = 32,  // Changed from 64 to 32
     parameter INST_WIDTH = 32,
     parameter REG_ADDR_WIDTH = 5,
     parameter CP_NUM = 4,
@@ -85,34 +81,28 @@ module offload_manager #(
     output logic [31:0]                       exception_count
 );
 
-    // Internal signals between components
+    // Internal signals
     logic                              classify_valid;
     logic [1:0]                        classify_cp_select;
     logic                              classify_offloadable;
     logic                              classify_ready;
-    
     logic                              alloc_request;
     logic [$clog2(TABLE_ENTRIES)-1:0]  alloc_entry_id;
     logic                              alloc_success;
     logic                              alloc_full;
-    
     logic                              complete_valid;
     logic [$clog2(TABLE_ENTRIES)-1:0]  complete_entry_id;
     logic [DATA_WIDTH-1:0]             complete_result;
     logic                              complete_exception;
     logic [3:0]                        complete_exception_code;
-    
     logic                              offload_request;
     logic                              offload_stall;
     logic [TAG_WIDTH-1:0]              instruction_tag;
-    
-    // Enhanced dispatcher logic
     logic dispatcher_detected;
     logic [1:0] dispatcher_cp_select;
     logic dispatcher_stall_request;
-    
-    // Tag generation for instruction tracking
     logic [TAG_WIDTH-1:0] tag_counter;
+    
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             tag_counter <= '0;
@@ -121,14 +111,12 @@ module offload_manager #(
         end
     end
     
-    // Decode signals
     logic [6:0] opcode;
     logic [2:0] funct3;
     
     assign opcode = id_instruction[6:0];
     assign funct3 = id_instruction[14:12];
     
-    // Instruction classification and dispatch decision
     always_comb begin
         classify_valid = id_valid && !global_stall;
         dispatcher_detected = 1'b0;
@@ -136,19 +124,19 @@ module offload_manager #(
         
         if (classify_valid) begin
             case (opcode)
-                7'b1110011: begin // System instructions (CSR, etc.) -> CP0
+                7'b1110011: begin
                     dispatcher_detected = 1'b1;
                     dispatcher_cp_select = 2'b00;
                 end
-                7'b1010011: begin // Floating point instructions -> CP1
+                7'b1010011: begin
                     dispatcher_detected = 1'b1;
                     dispatcher_cp_select = 2'b01;
                 end
-                7'b0001011: begin // Custom instructions -> CP2
+                7'b0001011: begin
                     dispatcher_detected = 1'b1;
                     dispatcher_cp_select = 2'b10;
                 end
-                7'b0101011: begin // GPU instructions -> CP3 (if available)
+                7'b0101011: begin
                     if (CP_NUM > 3) begin
                         dispatcher_detected = 1'b1;
                         dispatcher_cp_select = 2'b11;
@@ -162,20 +150,14 @@ module offload_manager #(
         end
     end
     
-    // Offload request generation
     assign offload_request = dispatcher_detected && classify_offloadable && classify_ready && !alloc_full;
     assign alloc_request = offload_request && !offload_stall;
-    
-    // Coprocessor interface
     assign cp_valid = alloc_success;
     assign cp_instruction = id_instruction;
-    assign cp_data_in = rs1_data;  // Primary operand
+    assign cp_data_in = rs1_data;
     assign cp_select = classify_cp_select;
-    
-    // Stall request logic
     assign dispatcher_stall_request = dispatcher_detected && (!classify_ready || alloc_full || offload_stall);
     
-    // Completion tracking
     logic [$clog2(TABLE_ENTRIES)-1:0] completion_entry_counter;
     logic [CP_NUM-1:0] cp_result_valid_prev;
     
@@ -185,9 +167,6 @@ module offload_manager #(
             cp_result_valid_prev <= '0;
         end else begin
             cp_result_valid_prev <= cp_result_valid;
-            
-            // Simple completion tracking - in real implementation would need
-            // proper entry ID management from coprocessor completion signals
             for (int i = 0; i < CP_NUM; i++) begin
                 if (cp_result_valid[i] && !cp_result_valid_prev[i]) begin
                     completion_entry_counter <= completion_entry_counter + 1;
@@ -196,21 +175,16 @@ module offload_manager #(
         end
     end
     
-    // Completion interface - simplified for this example
     assign complete_valid = |cp_result_valid;
     assign complete_entry_id = completion_entry_counter;
     assign complete_result = cp_data_out;
     assign complete_exception = cp_exception;
-    assign complete_exception_code = 4'h0;  // Would need proper exception code from CP
-    
-    // Result output logic
+    assign complete_exception_code = 4'h0;
     assign result_valid = complete_valid;
-    assign result_reg_addr = id_rd;  // Simplified - should come from table
+    assign result_reg_addr = id_rd;
     assign result_data = complete_result;
     assign result_exception = complete_exception;
     assign result_exception_code = complete_exception_code;
-    
-    // Status outputs
     assign offload_detected = dispatcher_detected;
     assign offload_ready = classify_ready && !alloc_full && !offload_stall;
     
@@ -225,8 +199,6 @@ module offload_manager #(
     ) dest_table (
         .clk(clk),
         .rst_n(rst_n),
-        
-        // Classification interface
         .classify_valid(classify_valid),
         .classify_instruction(id_instruction),
         .classify_pc(if_pc),
@@ -234,8 +206,6 @@ module offload_manager #(
         .classify_cp_select(classify_cp_select),
         .classify_offloadable(classify_offloadable),
         .classify_ready(classify_ready),
-        
-        // Allocation interface
         .alloc_request(alloc_request),
         .alloc_instruction(id_instruction),
         .alloc_pc(if_pc),
@@ -245,15 +215,11 @@ module offload_manager #(
         .alloc_entry_id(alloc_entry_id),
         .alloc_success(alloc_success),
         .alloc_full(alloc_full),
-        
-        // Completion interface
         .complete_valid(complete_valid),
         .complete_entry_id(complete_entry_id),
         .complete_result(complete_result),
         .complete_exception(complete_exception),
         .complete_exception_code(complete_exception_code),
-        
-        // Status query - not used in this simplified version
         .query_entry_id('0),
         .query_valid(),
         .query_completed(),
@@ -262,20 +228,14 @@ module offload_manager #(
         .query_instruction(),
         .query_cp_select(),
         .query_result(),
-        
-        // Coprocessor status
         .cp_busy(cp_busy),
         .cp_available(cp_available),
         .cp_exception(cp_exception),
-        
-        // Statistics
         .entries_used(),
         .entries_pending(pending_operations),
         .total_offloads(total_offloads),
         .completed_offloads(completed_offloads),
         .exception_count(exception_count),
-        
-        // Flush interface
         .flush_all(flush_all),
         .flush_cp(flush_cp),
         .flush_cp_select(flush_cp_select)
@@ -292,8 +252,6 @@ module offload_manager #(
     ) stall_handler (
         .clk(clk),
         .rst_n(rst_n),
-        
-        // Pipeline stage interfaces
         .if_valid(if_valid),
         .if_pc(if_pc),
         .id_valid(id_valid),
@@ -310,8 +268,6 @@ module offload_manager #(
         .wb_valid(wb_valid),
         .wb_rd(wb_rd),
         .wb_reg_write(wb_reg_write),
-        
-        // Coprocessor status
         .cp_busy(cp_busy),
         .cp_ready(cp_available),
         .cp_exception(cp_exception),
@@ -319,46 +275,33 @@ module offload_manager #(
         .cp_result_valid(cp_result_valid),
         .cp_reg_addr(cp_reg_addr),
         .cp_reg_write(cp_reg_write),
-        
-        // Dispatcher interface
         .offload_request(offload_request),
         .offload_cp_select(classify_cp_select),
         .offload_instruction(id_instruction),
         .offload_rs1(id_rs1),
         .offload_rs2(id_rs2),
         .offload_rd(id_rd),
-        
-        // Memory interface
         .mem_busy(mem_busy),
         .mem_conflict(mem_conflict),
-        
-        // Stall control outputs
         .if_stall(if_stall),
         .id_stall(id_stall),
         .ex_stall(ex_stall),
         .mm_stall(mm_stall),
         .wb_stall(wb_stall),
         .global_stall(global_stall),
-        
-        // Offload control outputs
         .offload_stall(offload_stall),
-        .offload_ready(),  // Use local offload_ready
+        .offload_ready(),
         .offload_timeout(offload_timeout),
-        
-        // Debug outputs
         .stall_reason(stall_reason),
         .stall_counter(),
         .cp_dependency_stall()
     );
 endmodule
 
-// Offload Destination Table
-// Manages routing table for offloaded instructions to appropriate coprocessors
-// Tracks instruction types, destination coprocessors, and completion status
-
+// offload_destination_table.sv - Fixed for 32-bit
 module offload_destination_table #(
-    parameter ADDR_WIDTH = 64,
-    parameter DATA_WIDTH = 64,
+    parameter ADDR_WIDTH = 32,  // Changed from 64 to 32
+    parameter DATA_WIDTH = 32,  // Changed from 64 to 32
     parameter INST_WIDTH = 32,
     parameter TABLE_ENTRIES = 16,
     parameter CP_NUM = 4,
@@ -366,8 +309,6 @@ module offload_destination_table #(
 )(
     input  logic                              clk,
     input  logic                              rst_n,
-    
-    // Instruction Classification Interface
     input  logic                              classify_valid,
     input  logic [INST_WIDTH-1:0]             classify_instruction,
     input  logic [ADDR_WIDTH-1:0]             classify_pc,
@@ -375,8 +316,6 @@ module offload_destination_table #(
     output logic [1:0]                        classify_cp_select,
     output logic                              classify_offloadable,
     output logic                              classify_ready,
-    
-    // Allocation Interface
     input  logic                              alloc_request,
     input  logic [INST_WIDTH-1:0]             alloc_instruction,
     input  logic [ADDR_WIDTH-1:0]             alloc_pc,
@@ -386,15 +325,11 @@ module offload_destination_table #(
     output logic [$clog2(TABLE_ENTRIES)-1:0]  alloc_entry_id,
     output logic                              alloc_success,
     output logic                              alloc_full,
-    
-    // Completion Interface
     input  logic                              complete_valid,
     input  logic [$clog2(TABLE_ENTRIES)-1:0]  complete_entry_id,
     input  logic [DATA_WIDTH-1:0]             complete_result,
     input  logic                              complete_exception,
     input  logic [3:0]                        complete_exception_code,
-    
-    // Status Query Interface
     input  logic [$clog2(TABLE_ENTRIES)-1:0]  query_entry_id,
     output logic                              query_valid,
     output logic                              query_completed,
@@ -403,26 +338,20 @@ module offload_destination_table #(
     output logic [INST_WIDTH-1:0]             query_instruction,
     output logic [1:0]                        query_cp_select,
     output logic [DATA_WIDTH-1:0]             query_result,
-    
-    // Coprocessor Status Interface
     input  logic [CP_NUM-1:0]                 cp_busy,
     input  logic [CP_NUM-1:0]                 cp_available,
     input  logic [CP_NUM-1:0]                 cp_exception,
-    
-    // Statistics/Debug Interface
     output logic [$clog2(TABLE_ENTRIES):0]    entries_used,
     output logic [$clog2(TABLE_ENTRIES):0]    entries_pending,
     output logic [31:0]                       total_offloads,
     output logic [31:0]                       completed_offloads,
     output logic [31:0]                       exception_count,
-    
-    // Flush Interface
     input  logic                              flush_all,
     input  logic                              flush_cp,
     input  logic [1:0]                        flush_cp_select
 );
 
-    // Table entry structure
+    // Table entry structure - all 32-bit
     typedef struct packed {
         logic                              valid;
         logic                              completed;
@@ -437,23 +366,16 @@ module offload_destination_table #(
         logic [31:0]                       timestamp;
     } table_entry_t;
     
-    // Destination table storage
     table_entry_t dest_table [TABLE_ENTRIES-1:0];
-    
-    // Allocation tracking
     logic [TABLE_ENTRIES-1:0] entry_valid;
     logic [TABLE_ENTRIES-1:0] entry_completed;
     logic [$clog2(TABLE_ENTRIES)-1:0] next_free_entry;
     logic [$clog2(TABLE_ENTRIES)-1:0] alloc_ptr;
     logic table_full;
-    
-    // Statistics counters
     logic [31:0] stat_total_offloads;
     logic [31:0] stat_completed_offloads;
     logic [31:0] stat_exception_count;
     logic [31:0] cycle_counter;
-    
-    // Classification decode signals
     logic [6:0] class_opcode;
     logic [2:0] class_funct3;
     logic [6:0] class_funct7;
@@ -462,7 +384,6 @@ module offload_destination_table #(
     assign class_funct3 = classify_instruction[14:12];
     assign class_funct7 = classify_instruction[31:25];
 
-    // Instruction classification logic
     always_comb begin
         classify_cp_select = 2'b00;
         classify_offloadable = 1'b0;
@@ -470,22 +391,22 @@ module offload_destination_table #(
         
         if (classify_valid) begin
             case (class_opcode)
-                7'b1110011: begin // System instructions (CSR, etc.) -> CP0
+                7'b1110011: begin
                     classify_offloadable = 1'b1;
                     classify_cp_select = 2'b00;
                     classify_ready = cp_available[0];
                 end
-                7'b1010011: begin // Floating point instructions -> CP1
+                7'b1010011: begin
                     classify_offloadable = 1'b1;
                     classify_cp_select = 2'b01;
                     classify_ready = cp_available[1];
                 end
-                7'b0001011: begin // Custom instructions -> CP2
+                7'b0001011: begin
                     classify_offloadable = 1'b1;
                     classify_cp_select = 2'b10;
                     classify_ready = cp_available[2];
                 end
-                7'b0101011: begin // Custom GPU instructions -> CP3 (if implemented)
+                7'b0101011: begin
                     if (CP_NUM > 3) begin
                         classify_offloadable = 1'b1;
                         classify_cp_select = 2'b11;
@@ -500,7 +421,6 @@ module offload_destination_table #(
         end
     end
     
-    // Find next free entry
     always_comb begin
         next_free_entry = '0;
         table_full = 1'b1;
@@ -513,7 +433,6 @@ module offload_destination_table #(
         end
     end
     
-    // Entry allocation logic
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             for (int i = 0; i < TABLE_ENTRIES; i++) begin
@@ -539,7 +458,6 @@ module offload_destination_table #(
         end else begin
             cycle_counter <= cycle_counter + 1;
             
-            // Handle flush operations
             if (flush_all) begin
                 entry_valid <= '0;
                 entry_completed <= '0;
@@ -558,7 +476,6 @@ module offload_destination_table #(
                 end
             end
             
-            // Handle new allocations
             if (alloc_request && !table_full) begin
                 dest_table[next_free_entry].valid <= 1'b1;
                 dest_table[next_free_entry].completed <= 1'b0;
@@ -576,7 +493,6 @@ module offload_destination_table #(
                 stat_total_offloads <= stat_total_offloads + 1;
             end
             
-            // Handle completions
             if (complete_valid && complete_entry_id < TABLE_ENTRIES) begin
                 if (entry_valid[complete_entry_id] && !entry_completed[complete_entry_id]) begin
                     dest_table[complete_entry_id].completed <= 1'b1;
@@ -591,20 +507,15 @@ module offload_destination_table #(
                     end
                 end
             end
-            
-            // Auto-clear completed entries after some cycles (optional)
-            // This could be implemented to free up table space automatically
         end
     end
     
-    // Allocation output logic
     always_comb begin
         alloc_entry_id = next_free_entry;
         alloc_success = alloc_request && !table_full;
         alloc_full = table_full;
     end
     
-    // Query interface logic
     always_comb begin
         query_valid = 1'b0;
         query_completed = 1'b0;
@@ -625,7 +536,6 @@ module offload_destination_table #(
         end
     end
     
-    // Statistics output logic
     always_comb begin
         entries_used = '0;
         entries_pending = '0;
@@ -640,20 +550,15 @@ module offload_destination_table #(
         end
     end
     
-    // Output assignments
     assign total_offloads = stat_total_offloads;
     assign completed_offloads = stat_completed_offloads;
     assign exception_count = stat_exception_count;
 endmodule
 
-
-// Offload Stall Handler
-// Manages stall conditions when instructions are offloaded to coprocessors
-// Handles dependencies, resource conflicts, and pipeline coordination
-
+// offload_stall_handler.sv - Fixed for 32-bit
 module offload_stall_handler #(
-    parameter ADDR_WIDTH = 64,
-    parameter DATA_WIDTH = 64,
+    parameter ADDR_WIDTH = 32,  // Changed from 64 to 32
+    parameter DATA_WIDTH = 32,  // Changed from 64 to 32
     parameter INST_WIDTH = 32,
     parameter REG_ADDR_WIDTH = 5,
     parameter CP_NUM = 4,
@@ -661,8 +566,6 @@ module offload_stall_handler #(
 )(
     input  logic                        clk,
     input  logic                        rst_n,
-    
-    // Pipeline Stage Interfaces
     input  logic                        if_valid,
     input  logic [ADDR_WIDTH-1:0]       if_pc,
     input  logic                        id_valid,
@@ -679,8 +582,6 @@ module offload_stall_handler #(
     input  logic                        wb_valid,
     input  logic [REG_ADDR_WIDTH-1:0]   wb_rd,
     input  logic                        wb_reg_write,
-    
-    // Coprocessor Status Interfaces
     input  logic [CP_NUM-1:0]           cp_busy,
     input  logic [CP_NUM-1:0]           cp_ready,
     input  logic [CP_NUM-1:0]           cp_exception,
@@ -688,39 +589,28 @@ module offload_stall_handler #(
     input  logic [CP_NUM-1:0]           cp_result_valid,
     input  logic [REG_ADDR_WIDTH-1:0]   cp_reg_addr [CP_NUM-1:0],
     input  logic [CP_NUM-1:0]           cp_reg_write,
-    
-    // Dispatcher Interface
     input  logic                        offload_request,
     input  logic [1:0]                  offload_cp_select,
     input  logic [INST_WIDTH-1:0]       offload_instruction,
     input  logic [REG_ADDR_WIDTH-1:0]   offload_rs1,
     input  logic [REG_ADDR_WIDTH-1:0]   offload_rs2,
     input  logic [REG_ADDR_WIDTH-1:0]   offload_rd,
-    
-    // Memory Interface
     input  logic                        mem_busy,
     input  logic                        mem_conflict,
-    
-    // Stall Control Outputs
     output logic                        if_stall,
     output logic                        id_stall,
     output logic                        ex_stall,
     output logic                        mm_stall,
     output logic                        wb_stall,
     output logic                        global_stall,
-    
-    // Offload Control Outputs
     output logic                        offload_stall,
     output logic                        offload_ready,
     output logic                        offload_timeout,
-    
-    // Debug/Status Outputs
     output logic [3:0]                  stall_reason,
     output logic [$clog2(STALL_TIMEOUT)-1:0] stall_counter,
     output logic [CP_NUM-1:0]           cp_dependency_stall
 );
 
-    // Stall reason codes
     typedef enum logic [3:0] {
         STALL_NONE              = 4'h0,
         STALL_CP_BUSY           = 4'h1,
@@ -732,23 +622,17 @@ module offload_stall_handler #(
         STALL_RESOURCE_CONFLICT = 4'h7
     } stall_reason_t;
 
-    // Internal registers
     logic [$clog2(STALL_TIMEOUT)-1:0] timeout_counter;
     logic stall_timeout_flag;
     stall_reason_t current_stall_reason;
-    
-    // Dependency tracking
     logic [CP_NUM-1:0] cp_pending_ops;
     logic [REG_ADDR_WIDTH-1:0] pending_rd [CP_NUM-1:0];
     logic [CP_NUM-1:0] pending_reg_write;
-    
-    // Hazard detection signals
     logic raw_hazard_rs1, raw_hazard_rs2;
     logic war_hazard, waw_hazard;
     logic structural_hazard;
     logic cp_resource_conflict;
     
-    // Track pending coprocessor operations
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             cp_pending_ops <= '0;
@@ -757,14 +641,12 @@ module offload_stall_handler #(
             end
             pending_reg_write <= '0;
         end else begin
-            // Start new operations
             if (offload_request && !offload_stall && offload_cp_select < CP_NUM) begin
                 cp_pending_ops[offload_cp_select] <= 1'b1;
                 pending_rd[offload_cp_select] <= offload_rd;
                 pending_reg_write[offload_cp_select] <= (offload_rd != '0);
             end
             
-            // Clear completed operations
             for (int i = 0; i < CP_NUM; i++) begin
                 if (cp_result_valid[i] || cp_exception[i]) begin
                     cp_pending_ops[i] <= 1'b0;
@@ -775,13 +657,11 @@ module offload_stall_handler #(
         end
     end
     
-    // RAW (Read After Write) hazard detection
     always_comb begin
         raw_hazard_rs1 = 1'b0;
         raw_hazard_rs2 = 1'b0;
         
         if (id_valid && offload_request) begin
-            // Check against pending coprocessor writes
             for (int i = 0; i < CP_NUM; i++) begin
                 if (cp_pending_ops[i] && pending_reg_write[i]) begin
                     if (offload_rs1 == pending_rd[i] && offload_rs1 != '0) begin
@@ -793,7 +673,6 @@ module offload_stall_handler #(
                 end
             end
             
-            // Check against pipeline stages
             if (ex_valid && ex_reg_write && ex_rd != '0) begin
                 if (offload_rs1 == ex_rd) raw_hazard_rs1 = 1'b1;
                 if (offload_rs2 == ex_rd) raw_hazard_rs2 = 1'b1;
@@ -806,12 +685,10 @@ module offload_stall_handler #(
         end
     end
     
-    // WAW (Write After Write) hazard detection
     always_comb begin
         waw_hazard = 1'b0;
         
         if (id_valid && offload_request && offload_rd != '0) begin
-            // Check against pending coprocessor writes
             for (int i = 0; i < CP_NUM; i++) begin
                 if (cp_pending_ops[i] && pending_reg_write[i] && !waw_hazard) begin
                     if (offload_rd == pending_rd[i]) begin
@@ -820,7 +697,6 @@ module offload_stall_handler #(
                 end
             end
             
-            // Check against pipeline stages
             if (ex_valid && ex_reg_write && offload_rd == ex_rd) begin
                 waw_hazard = 1'b1;
             end
@@ -830,26 +706,21 @@ module offload_stall_handler #(
         end
     end
     
-    // WAR (Write After Read) hazard detection - less critical for our design
     assign war_hazard = 1'b0;
     
-    // Structural hazard detection
     always_comb begin
         structural_hazard = 1'b0;
         cp_resource_conflict = 1'b0;
         
         if (offload_request && offload_cp_select < CP_NUM) begin
-            // Check if target coprocessor is busy
             structural_hazard = cp_busy[offload_cp_select];
             
-            // Check for resource conflicts with memory operations
             if (mem_busy || mem_conflict) begin
                 cp_resource_conflict = 1'b1;
             end
         end
     end
     
-    // Stall timeout counter
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             timeout_counter <= '0;
@@ -869,9 +740,7 @@ module offload_stall_handler #(
         end
     end
     
-    // Stall decision logic
     always_comb begin
-        // Default values
         if_stall = 1'b0;
         id_stall = 1'b0;
         ex_stall = 1'b0;
@@ -880,7 +749,6 @@ module offload_stall_handler #(
         offload_stall = 1'b0;
         current_stall_reason = STALL_NONE;
         
-        // Check for various stall conditions
         if (stall_timeout_flag) begin
             global_stall = 1'b1;
             offload_stall = 1'b1;
@@ -913,12 +781,10 @@ module offload_stall_handler #(
             global_stall = 1'b0;
         end
         
-        // Propagate stalls upstream when needed
         if (id_stall) begin
             if_stall = 1'b1;
         end
         
-        // Global stall overrides individual stalls
         if (global_stall) begin
             if_stall = 1'b1;
             id_stall = 1'b1;
@@ -928,7 +794,6 @@ module offload_stall_handler #(
         end
     end
     
-    // Generate per-coprocessor dependency stalls for debugging
     always_comb begin
         for (int i = 0; i < CP_NUM; i++) begin
             cp_dependency_stall[i] = cp_pending_ops[i] && 
@@ -938,7 +803,6 @@ module offload_stall_handler #(
         end
     end
     
-    // Output assignments
     assign offload_ready = !offload_stall && offload_request;
     assign offload_timeout = stall_timeout_flag;
     assign stall_reason = current_stall_reason;

@@ -1,5 +1,5 @@
 module stage_if #(
-    parameter ADDR_WIDTH = 64, 
+    parameter ADDR_WIDTH = 32,
     parameter INST_WIDTH = 32, 
     parameter PC_TYPE_NUM = 4
 )(
@@ -8,7 +8,7 @@ module stage_if #(
     input  logic                           stall,
     input  logic                           inst_w_en,
     input  logic [INST_WIDTH-1:0]          inst_w_in,
-    input  logic [$clog2(PC_TYPE_NUM)-1:0] pc_sel, // 0=Plus4, 1=Branch, 2=Jump, 3=Jump Register
+    input  logic [$clog2(PC_TYPE_NUM)-1:0] pc_sel,
     input  logic [ADDR_WIDTH-1:0]          bra_addr,
     input  logic [ADDR_WIDTH-1:0]          jal_addr,
     input  logic [ADDR_WIDTH-1:0]          jar_addr,
@@ -29,7 +29,6 @@ module stage_if #(
     assign pc_next_options[2] = jal_addr;
     assign pc_next_options[3] = jar_addr;
 
-    // PC selection mux
     mux_n #(
         .INPUT_WIDTH(ADDR_WIDTH),
         .INPUT_NUM(PC_TYPE_NUM)
@@ -39,7 +38,6 @@ module stage_if #(
         .data_out(pc_next)
     );
 
-    // PC register
     reg_if #(
         .ADDR_WIDTH(ADDR_WIDTH)
     ) pc_reg (
@@ -50,7 +48,6 @@ module stage_if #(
         .pc_reg(pc_curr)
     );
 
-    // Instruction memory
     memory_instruction #(
         .INST_WIDTH(INST_WIDTH),
         .X_WIDTH(4),
@@ -73,7 +70,7 @@ module stage_if #(
 endmodule
 
 module stage_id #(
-    parameter ADDR_WIDTH = 64, 
+    parameter ADDR_WIDTH = 32,  // Changed from 64 to 32
     parameter INST_WIDTH = 32, 
     parameter REG_NUM = 32
 )(
@@ -127,7 +124,6 @@ module stage_id #(
     logic [ADDR_WIDTH-1:0] b_file_out;
     logic [INST_WIDTH-1:0] d_inst;
 
-    // Equality check for branches
     equ #(
         .DATA_WIDTH(ADDR_WIDTH)
     ) rs_equality (
@@ -136,7 +132,6 @@ module stage_id #(
         .is_equal(is_equal)
     );
     
-    // Branch address calculation
     branch_calc #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .INST_WIDTH(INST_WIDTH)
@@ -149,7 +144,6 @@ module stage_id #(
         .jalr_addr(jar_addr)
     );
 
-    // Load-use hazard detection
     stage_id_stall #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .REG_NUM(REG_NUM)
@@ -167,7 +161,6 @@ module stage_id #(
 
     assign reg_stall = stall | load_stall;
 
-    // IF/ID pipeline register
     reg_if_to_id #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .INST_WIDTH(INST_WIDTH)
@@ -185,7 +178,6 @@ module stage_id #(
         .d_inst(d_inst)
     );
 
-    // Register file
     register_bank_list #(
         .REG_NUM(REG_NUM),
         .DATA_WIDTH(ADDR_WIDTH)
@@ -207,7 +199,6 @@ module stage_id #(
         .data_out_gpu(read_out_gpu)
     );
     
-    // Bypass logic for operand A
     bypass_mux #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .REG_NUM(REG_NUM)
@@ -225,7 +216,6 @@ module stage_id #(
         .bypass_out(a_out)
     );
     
-    // Bypass logic for operand B
     bypass_mux #(
         .ADDR_WIDTH(ADDR_WIDTH),
         .REG_NUM(REG_NUM)
@@ -243,7 +233,6 @@ module stage_id #(
         .bypass_out(b_out_options[0])
     );
 
-    // Immediate generation
     imme #(
         .DATA_WIDTH(ADDR_WIDTH),
         .INST_WIDTH(INST_WIDTH),
@@ -254,7 +243,6 @@ module stage_id #(
         .imm(b_out_options[1])
     );
     
-    // Select between register and immediate
     mux_n #(
         .INPUT_WIDTH(ADDR_WIDTH),
         .INPUT_NUM(2)
@@ -269,7 +257,7 @@ module stage_id #(
 endmodule
 
 module stage_id_stall #(
-    parameter ADDR_WIDTH = 64, 
+    parameter ADDR_WIDTH = 32,  // Changed from 64 to 32
     parameter REG_NUM = 32
 )(
     input  logic                       is_load,
@@ -288,7 +276,7 @@ module stage_id_stall #(
 endmodule
 
 module pl_stage_exe #(
-    parameter DATA_WIDTH = 64
+    parameter DATA_WIDTH = 32  // Changed from 64 to 32
 )(
     input  logic [DATA_WIDTH-1:0] ea,
     input  logic [DATA_WIDTH-1:0] eb,
@@ -297,62 +285,54 @@ module pl_stage_exe #(
     input  logic                  ecall,
     output logic [DATA_WIDTH-1:0] eal
 );
-    // ALU implementation
     logic [DATA_WIDTH-1:0] ealu;
     
     always_comb begin
         case (ealuc)
-            5'b00000: ealu = ea + eb;                        // ADD
-            5'b00001: ealu = ea - eb;                        // SUB
-            5'b00010: ealu = ea & eb;                        // AND
-            5'b00011: ealu = ea | eb;                        // OR
-            5'b00100: ealu = ea ^ eb;                        // XOR
-            5'b00101: ealu = ~(ea | eb);                     // NOR
-            5'b00110: ealu = ~(ea & eb);                     // NAND
-            5'b00111: ealu = ea << eb[5:0];                  // SLL
-            5'b01000: ealu = ea >> eb[5:0];                  // SRL
-            5'b01001: ealu = $signed(ea) >>> eb[5:0];        // SRA
-            5'b01010: ealu = ($signed(ea) < $signed(eb)) ? {{(DATA_WIDTH-1){1'b0}}, 1'b1} : {DATA_WIDTH{1'b0}}; // SLT
-            5'b01011: ealu = (ea < eb) ? {{(DATA_WIDTH-1){1'b0}}, 1'b1} : {DATA_WIDTH{1'b0}};              // SLTU
-            5'b01100: ealu = ea;                             // Pass-through A
-            5'b01101: ealu = eb;                             // Pass-through B
-            5'b01110: ealu = ~ea;                            // NOT A
-            5'b01111: ealu = (ea == eb) ? {{(DATA_WIDTH-1){1'b0}}, 1'b1} : {DATA_WIDTH{1'b0}};             // EQ
-            5'b10000: ealu = (ea != eb) ? {{(DATA_WIDTH-1){1'b0}}, 1'b1} : {DATA_WIDTH{1'b0}};             // NE
-            5'b10001: ealu = ea + {{(DATA_WIDTH-1){1'b0}}, 1'b1};                         // INC
-            5'b10010: ealu = ea - {{(DATA_WIDTH-1){1'b0}}, 1'b1};                         // DEC
+            5'b00000: ealu = ea + eb;
+            5'b00001: ealu = ea - eb;
+            5'b00010: ealu = ea & eb;
+            5'b00011: ealu = ea | eb;
+            5'b00100: ealu = ea ^ eb;
+            5'b00101: ealu = ~(ea | eb);
+            5'b00110: ealu = ~(ea & eb);
+            5'b00111: ealu = ea << eb[4:0];  // Changed from eb[5:0] to eb[4:0] for 32-bit
+            5'b01000: ealu = ea >> eb[4:0];  // Changed from eb[5:0] to eb[4:0]
+            5'b01001: ealu = $signed(ea) >>> eb[4:0];  // Changed from eb[5:0] to eb[4:0]
+            5'b01010: ealu = ($signed(ea) < $signed(eb)) ? {{(DATA_WIDTH-1){1'b0}}, 1'b1} : {DATA_WIDTH{1'b0}};
+            5'b01011: ealu = (ea < eb) ? {{(DATA_WIDTH-1){1'b0}}, 1'b1} : {DATA_WIDTH{1'b0}};
+            5'b01100: ealu = ea;
+            5'b01101: ealu = eb;
+            5'b01110: ealu = ~ea;
+            5'b01111: ealu = (ea == eb) ? {{(DATA_WIDTH-1){1'b0}}, 1'b1} : {DATA_WIDTH{1'b0}};
+            5'b10000: ealu = (ea != eb) ? {{(DATA_WIDTH-1){1'b0}}, 1'b1} : {DATA_WIDTH{1'b0}};
+            5'b10001: ealu = ea + {{(DATA_WIDTH-1){1'b0}}, 1'b1};
+            5'b10010: ealu = ea - {{(DATA_WIDTH-1){1'b0}}, 1'b1};
             default:  ealu = {DATA_WIDTH{1'b0}};
         endcase
     end
 
-    // 2-to-1 mux for ecall
     assign eal = ecall ? epc4 : ealu;
 
 endmodule
 
 module mm_stage #(
-    parameter DATA_WIDTH = 64,
-    parameter ADDR_WIDTH = 64
+    parameter DATA_WIDTH = 32,  // Changed from 64 to 32
+    parameter ADDR_WIDTH = 32   // Changed from 64 to 32
 )(
     input  logic                        clk,
     input  logic                        rst_n,
-
-    // Inputs from EX/MEM pipeline register
     input  logic [DATA_WIDTH-1:0]       ex_mem_alu_result,
     input  logic [DATA_WIDTH-1:0]       ex_mem_write_data,
     input  logic [4:0]                  ex_mem_rd,
     input  logic                        ex_mem_mem_read,
     input  logic                        ex_mem_mem_write,
     input  logic                        ex_mem_reg_write,
-
-    // Memory interface
     output logic [ADDR_WIDTH-1:0]       mem_addr,
     output logic [DATA_WIDTH-1:0]       mem_write_data,
     output logic                        mem_read,
     output logic                        mem_write,
     input  logic [DATA_WIDTH-1:0]       mem_read_data,
-
-    // Outputs to MEM/WB pipeline register
     output logic [DATA_WIDTH-1:0]       mem_wb_mem_data,
     output logic [DATA_WIDTH-1:0]       mem_wb_alu_result,
     output logic [4:0]                  mem_wb_rd,
@@ -370,18 +350,13 @@ module mm_stage #(
             mem_wb_rd        <= '0;
             mem_wb_reg_write <= '0;
         end else begin
-            // Memory interface
             mem_addr       <= ex_mem_alu_result;
             mem_write_data <= ex_mem_write_data;
             mem_read       <= ex_mem_mem_read;
             mem_write      <= ex_mem_mem_write;
-
-            // Forward to WB stage
             mem_wb_alu_result <= ex_mem_alu_result;
             mem_wb_rd         <= ex_mem_rd;
             mem_wb_reg_write  <= ex_mem_reg_write;
-
-            // Memory data for load instructions
             if (ex_mem_mem_read)
                 mem_wb_mem_data <= mem_read_data;
             else
@@ -392,20 +367,18 @@ module mm_stage #(
 endmodule
 
 module pl_stage_wb #(
-    parameter DATA_WIDTH = 64
+    parameter DATA_WIDTH = 32  // Changed from 64 to 32
 )(
     input  logic [DATA_WIDTH-1:0] walu,
     input  logic [DATA_WIDTH-1:0] wmem,
     input  logic                  wmem2reg,
     output logic [DATA_WIDTH-1:0] wdata
 );
-    // Write-back data selection
     assign wdata = wmem2reg ? wmem : walu;
 endmodule
 
-// Pipeline support modules
 module reg_if #(
-    parameter ADDR_WIDTH = 64
+    parameter ADDR_WIDTH = 32  // Changed from 64 to 32
 )(
     input  logic                     clk,
     input  logic                     reset,
@@ -438,12 +411,10 @@ module memory_instruction #(
     logic [INST_WIDTH-1:0] mem [0:DEPTH-1];
     logic [X_WIDTH+Y_WIDTH-1:0] addr = {Y_addr, X_addr};
 
-    // Initialize with simple program
     initial begin
         for (int i = 0; i < DEPTH; i++) begin
             mem[i] = 32'h00000013; // NOP
         end
-        // Simple test program
         mem[0] = 32'h00000013; // NOP
         mem[1] = 32'h00A00093; // ADDI x1, x0, 10
         mem[2] = 32'h01400113; // ADDI x2, x0, 20
@@ -460,7 +431,7 @@ module memory_instruction #(
 endmodule
 
 module reg_if_to_id #(
-    parameter ADDR_WIDTH = 64,
+    parameter ADDR_WIDTH = 32,  // Changed from 64 to 32
     parameter INST_WIDTH = 32
 )(
     input  logic                     clk,
@@ -494,7 +465,7 @@ endmodule
 
 module register_bank_list #(
     parameter REG_NUM = 32,
-    parameter DATA_WIDTH = 64
+    parameter DATA_WIDTH = 32  // Changed from 64 to 32
 )(
     input  logic                       clk,
     input  logic                       reset,
