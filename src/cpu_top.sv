@@ -383,12 +383,22 @@ always_comb begin
   logic [DATA_WIDTH-1:0] alu_input_a;
   logic [DATA_WIDTH-1:0] alu_input_b;
 
-  alu_input_a = forwarded_rs1_data;  // Use forwarded data instead of id_rs1_data
-  alu_input_b = alu_src ? immediate : forwarded_rs2_data;
+  // Use latched values from ID stage for non-bypassed path
+  // But still allow forwarding for current instruction
+  if (pipeline_stall) begin
+    alu_input_a = id_rs1_data;
+    alu_input_b = alu_src ? immediate : id_rs2_data;
+  end else begin
+    alu_input_a = forwarded_rs1_data;
+    alu_input_b = alu_src ? immediate : forwarded_rs2_data;
+  end
 
   if (mem_read || mem_write) begin
-    $display("Time %t: MemOp - rs1_data=%h, immediate=%h, addr=%h", 
-             $time, alu_input_a, immediate, alu_input_a + immediate);
+    // Only log when we're actually in the right stage
+    if (id_valid && !pipeline_stall) begin
+      $display("Time %t: MemOp - rs1_data=%h, immediate=%h, addr=%h", 
+               $time, alu_input_a, immediate, alu_input_a + immediate);
+    end
   end
 
   // Special handling for memory operations
@@ -461,26 +471,27 @@ end
 
   // ID Stage
   always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      id_pc <= 32'h0;
-      id_inst <= 32'h00000013;  // NOP
-      id_valid <= 1'b0;
-      id_rs1_data <= 32'h0;
-      id_rs2_data <= 32'h0;
-      id_rd <= 5'h0;
-      id_rs1 <= 5'h0;
-      id_rs2 <= 5'h0;
-    end else if (!pipeline_stall) begin
-      id_pc <= if_pc;
-      id_inst <= if_inst;
-      id_valid <= if_valid && imem_ready;
-      id_rs1_data <= reg_rs1_data;
-      id_rs2_data <= reg_rs2_data;
-      id_rd <= rd;
-      id_rs1 <= rs1;
-      id_rs2 <= rs2;
-    end
+  if (!rst_n) begin
+    id_pc <= 32'h0;
+    id_inst <= 32'h00000013;  // NOP
+    id_valid <= 1'b0;
+    id_rs1_data <= 32'h0;
+    id_rs2_data <= 32'h0;
+    id_rd <= 5'h0;
+    id_rs1 <= 5'h0;
+    id_rs2 <= 5'h0;
+  end else if (!pipeline_stall) begin
+    id_pc <= if_pc;
+    id_inst <= if_inst;
+    id_valid <= if_valid && imem_ready;
+    // Use forwarded data instead of raw register file output
+    id_rs1_data <= forwarded_rs1_data;  // Changed from reg_rs1_data
+    id_rs2_data <= forwarded_rs2_data;  // Changed from reg_rs2_data
+    id_rd <= rd;      // From control unit
+    id_rs1 <= rs1;    // From control unit
+    id_rs2 <= rs2;    // From control unit
   end
+end
 
   always_ff @(posedge clk) begin
   if (id_valid && reg_write && !pipeline_stall) begin
@@ -518,7 +529,7 @@ end
     end else if (!pipeline_stall) begin
       ex_pc <= id_pc;
       ex_result <= alu_result;
-      ex_rd <= id_rd;
+      ex_rd <= rd;
       ex_reg_write <= reg_write && id_valid && !is_m_op && !is_a_op;
       ex_mem_read <= mem_read && id_valid && !is_a_op;
       ex_mem_write <= mem_write && id_valid && !is_a_op;
@@ -527,12 +538,12 @@ end
 
       // Track M operations
       ex_is_m_op <= is_m_op && id_valid;
-      ex_m_rd <= is_m_op ? id_rd : 5'h0;
+      ex_m_rd <= is_m_op ? rd : 5'h0;
       ex_m_valid <= is_m_op && id_valid;
 
       // Track A operations
       ex_is_a_op <= is_a_op && id_valid;
-      ex_a_rd <= is_a_op ? id_rd : 5'h0;
+      ex_a_rd <= is_a_op ? rd : 5'h0;
       ex_a_valid <= is_a_op && id_valid;
     end
   end
