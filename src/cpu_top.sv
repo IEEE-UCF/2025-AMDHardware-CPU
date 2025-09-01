@@ -273,6 +273,17 @@ module cpu_top #(
       .rs2(rs2)
   );
 
+  // Debug: Print instruction decode
+  always_ff @(posedge clk) begin
+    if (id_valid && !pipeline_stall) begin
+      $display("Time %t: Decode - inst=%h, opcode=%b, rd=%d, rs1=%d, rs2=%d, imm_type=%b", 
+               $time, id_inst, opcode, rd, rs1, rs2, imm_type);
+      if (mem_read || mem_write) begin
+        $display("  Memory op: mem_read=%b, mem_write=%b", mem_read, mem_write);
+      end
+    end
+  end
+
   // ========================================
   // Register File
   // ========================================
@@ -471,6 +482,12 @@ end
     end
   end
 
+  always_ff @(posedge clk) begin
+  if (id_valid && reg_write && !pipeline_stall) begin
+    $display("Time %t: ID will write to rd=%d", $time, rd);
+  end
+end
+
   // EX Stage (Modified for M/A)
   always_ff @(posedge clk or negedge rst_n) begin
   if (!rst_n) begin
@@ -568,6 +585,19 @@ end
       wb_valid <= mem_valid;
     end
   end
+
+  // Debug: Check if write-back is working
+always_ff @(posedge clk) begin
+  if (wb_reg_write && wb_valid && !pipeline_stall) begin
+    $display("Time %t: RegWrite - rd=%d, value=%h", $time, wb_rd, wb_result);
+  end
+  
+  // Also check what's preventing writes
+  if (mem_valid && !pipeline_stall) begin
+    $display("Time %t: MEM stage - rd=%d, reg_write=%b, result=%h", 
+             $time, mem_rd, mem_reg_write, mem_result);
+  end
+end
 
   // ========================================
   // Data Memory Interface (Modified for A)
