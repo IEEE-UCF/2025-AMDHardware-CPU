@@ -157,19 +157,6 @@ module cpu_top #(
   logic                  pipeline_flush;
   assign pipeline_flush = branch_taken || jump || jalr;
 
-  // State machine for simple pipeline control
-  typedef enum logic [3:0] {
-    IDLE   = 4'b0000,
-    FETCH  = 4'b0001,
-    DECODE = 4'b0010,
-    EXEC   = 4'b0011,
-    MEM    = 4'b0100,
-    WB     = 4'b0101,
-    STALL  = 4'b0110
-  } cpu_state_t;
-
-  cpu_state_t current_state, next_state;
-
   // ========================================
   // M Extension Unit (Multiply/Divide)
   // ========================================
@@ -190,7 +177,7 @@ module cpu_top #(
       .stall_i   (pipeline_stall)
   );
 
-  assign m_stall = is_m_op && !m_ready;
+  assign m_stall = ex_is_m_op && ex_m_valid && !m_result_valid;
 
   // ========================================
   // A Extension Unit (Atomics)
@@ -249,8 +236,14 @@ module cpu_top #(
 
   // Instruction memory interface
   assign imem_addr = pc;
-  assign imem_read = (current_state == FETCH) && !pipeline_stall;
-  assign if_inst   = imem_read_data;
+  assign imem_read = !execution_stall;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        if_inst <= 32'h00000013; // NOP Signal
+    end else if (!pipeline_stall) begin
+        if_inst <= imem_read_data;
+    end
+  end
 
   // ========================================
   // Control Unit (Modified for M/A)
@@ -292,11 +285,49 @@ module cpu_top #(
       .write_addr(wb_rd),
       .data_in(wb_result),
       .write_en(wb_reg_write),
-      .read_addr_a(rs1),
-      .read_addr_b(rs2),
+      .read_addr_a(id_inst[19:15]),
+      .read_addr_b(id_inst[24:20]),
       .data_out_a(reg_rs1_data),
       .data_out_b(reg_rs2_data)
   );
+
+  // something
+  // Add forwarding logic for ALU inputs (NEW CODE - insert at line ~280)
+  logic [DATA_WIDTH-1:0] forwarded_rs1_data;
+  logic [DATA_WIDTH-1:0] forwarded_rs2_data;
+
+always_comb begin
+// Forward from EX stage
+if (ex_reg_write && ex_valid && (ex_rd == rs1) && (rs1 != 0)) begin
+    forwarded_rs1_data = ex_result;
+end
+// Forward from MEM stage  
+else if (mem_reg_write && mem_valid && (mem_rd == rs1) && (rs1 != 0)) begin
+    forwarded_rs1_data = mem_result;
+end
+// Forward from WB stage
+else if (wb_reg_write && wb_valid && (wb_rd == rs1) && (rs1 != 0)) begin
+    forwarded_rs1_data = wb_result;
+end
+// Use register file output
+else begin
+    forwarded_rs1_data = reg_rs1_data;
+end
+
+// Same for rs2
+if (ex_reg_write && ex_valid && (ex_rd == rs2) && (rs2 != 0)) begin
+    forwarded_rs2_data = ex_result;
+end
+else if (mem_reg_write && mem_valid && (mem_rd == rs2) && (rs2 != 0)) begin
+    forwarded_rs2_data = mem_result;
+end
+else if (wb_reg_write && wb_valid && (wb_rd == rs2) && (rs2 != 0)) begin
+    forwarded_rs2_data = wb_result;
+end
+else begin
+    forwarded_rs2_data = reg_rs2_data;
+end
+end
 
   // ========================================
   // Immediate Generator
@@ -334,40 +365,50 @@ module cpu_top #(
       .is_equal(is_equal)
   );
 
-  // ========================================
-  // ALU (Modified to skip M/A ops)
-  // ========================================
-  always_comb begin
-    logic [DATA_WIDTH-1:0] alu_input_a;
-    logic [DATA_WIDTH-1:0] alu_input_b;
+// ========================================
+// ALU (Modified to skip M/A ops and handle memory)
+// ========================================
+always_comb begin
+  logic [DATA_WIDTH-1:0] alu_input_a;
+  logic [DATA_WIDTH-1:0] alu_input_b;
 
-    alu_input_a = ex_valid ? id_rs1_data : 32'h0;
-    alu_input_b = alu_src ? immediate : id_rs2_data;
+  alu_input_a = forwarded_rs1_data;  // Use forwarded data instead of id_rs1_data
+  alu_input_b = alu_src ? immediate : forwarded_rs2_data;
 
-    // Don't compute ALU result for M/A operations
-    if (is_m_op || is_a_op) begin
-      alu_result = 32'h0;
-    end else begin
-      case (alu_op)
-        5'b00000: alu_result = alu_input_a + alu_input_b;  // ADD
-        5'b00001: alu_result = alu_input_a - alu_input_b;  // SUB
-        5'b00010: alu_result = alu_input_a << alu_input_b[4:0];  // SLL
-        5'b00011:
-        alu_result = ($signed(alu_input_a) < $signed(alu_input_b)) ? 32'h1 : 32'h0;  // SLT
-        5'b00100: alu_result = (alu_input_a < alu_input_b) ? 32'h1 : 32'h0;  // SLTU
-        5'b00101: alu_result = alu_input_a ^ alu_input_b;  // XOR
-        5'b00110: alu_result = alu_input_a >> alu_input_b[4:0];  // SRL
-        5'b00111: alu_result = $signed(alu_input_a) >>> alu_input_b[4:0];  // SRA
-        5'b01000: alu_result = alu_input_a | alu_input_b;  // OR
-        5'b01001: alu_result = alu_input_a & alu_input_b;  // AND
-        5'b01010: alu_result = immediate;  // LUI
-        5'b01011: alu_result = id_pc + immediate;  // AUIPC
-        default: alu_result = 32'h0;
-      endcase
-    end
-
-    alu_zero = (alu_result == 32'h0);
+  if (mem_read || mem_write) begin
+    $display("Time %t: MemOp - rs1_data=%h, immediate=%h, addr=%h", 
+             $time, alu_input_a, immediate, alu_input_a + immediate);
   end
+
+  // Special handling for memory operations
+  if (mem_read || mem_write) begin
+    // Load/Store always use rs1 + immediate for address
+    alu_result = alu_input_a + immediate;  // Address calculation
+  end
+  else if (is_m_op || is_a_op) begin
+    alu_result = 32'h0;
+  end
+  else begin
+    case (alu_op)
+      5'b00000: alu_result = alu_input_a + alu_input_b;  // ADD
+      5'b00001: alu_result = alu_input_a - alu_input_b;  // SUB
+      5'b00010: alu_result = alu_input_a << alu_input_b[4:0];  // SLL
+      5'b00011:
+      alu_result = ($signed(alu_input_a) < $signed(alu_input_b)) ? 32'h1 : 32'h0;  // SLT
+      5'b00100: alu_result = (alu_input_a < alu_input_b) ? 32'h1 : 32'h0;  // SLTU
+      5'b00101: alu_result = alu_input_a ^ alu_input_b;  // XOR
+      5'b00110: alu_result = alu_input_a >> alu_input_b[4:0];  // SRL
+      5'b00111: alu_result = $signed(alu_input_a) >>> alu_input_b[4:0];  // SRA
+      5'b01000: alu_result = alu_input_a | alu_input_b;  // OR
+      5'b01001: alu_result = alu_input_a & alu_input_b;  // AND
+      5'b01010: alu_result = immediate;  // LUI
+      5'b01011: alu_result = id_pc + immediate;  // AUIPC
+      default: alu_result = 32'h0;
+    endcase
+  end
+
+  alu_zero = (alu_result == 32'h0);
+end
 
   // ========================================
   // Coprocessor Interface
@@ -432,21 +473,31 @@ module cpu_top #(
 
   // EX Stage (Modified for M/A)
   always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      ex_pc <= 32'h0;
-      ex_result <= 32'h0;
-      ex_rd <= 5'h0;
-      ex_reg_write <= 1'b0;
-      ex_mem_read <= 1'b0;
-      ex_mem_write <= 1'b0;
-      ex_mem_data <= 32'h0;
-      ex_valid <= 1'b0;
-      ex_is_m_op <= 1'b0;
-      ex_m_rd <= 5'h0;
-      ex_m_valid <= 1'b0;
-      ex_is_a_op <= 1'b0;
-      ex_a_rd <= 5'h0;
-      ex_a_valid <= 1'b0;
+  if (!rst_n) begin
+    ex_pc <= 32'h0;
+    ex_result <= 32'h0;
+    ex_rd <= 5'h0;
+    ex_reg_write <= 1'b0;
+    ex_mem_read <= 1'b0;
+    ex_mem_write <= 1'b0;
+    ex_mem_data <= 32'h0;
+    ex_valid <= 1'b0;
+    ex_is_m_op <= 1'b0;
+    ex_m_rd <= 5'h0;
+    ex_m_valid <= 1'b0;
+    ex_is_a_op <= 1'b0;
+    ex_a_rd <= 5'h0;
+    ex_a_valid <= 1'b0;
+  end else if (load_use_hazard) begin
+    // Insert bubble (NOP) in EX stage when load-use hazard detected
+    ex_reg_write <= 1'b0;
+    ex_mem_read <= 1'b0;
+    ex_mem_write <= 1'b0;
+    ex_valid <= 1'b0;
+    ex_is_m_op <= 1'b0;
+    ex_m_valid <= 1'b0;
+    ex_is_a_op <= 1'b0;
+    ex_a_valid <= 1'b0;
     end else if (!pipeline_stall) begin
       ex_pc <= id_pc;
       ex_result <= alu_result;
@@ -454,7 +505,7 @@ module cpu_top #(
       ex_reg_write <= reg_write && id_valid && !is_m_op && !is_a_op;
       ex_mem_read <= mem_read && id_valid && !is_a_op;
       ex_mem_write <= mem_write && id_valid && !is_a_op;
-      ex_mem_data <= id_rs2_data;
+      ex_mem_data <= forwarded_rs2_data;
       ex_valid <= id_valid;
 
       // Track M operations
@@ -489,7 +540,7 @@ module cpu_top #(
         mem_result <= a_result;
         mem_rd <= ex_a_rd;
         mem_reg_write <= 1'b1;
-      end else if (ex_mem_read && dmem_ready) begin
+      end else if (ex_mem_read) begin
         mem_result <= dmem_read_data;
         mem_rd <= ex_rd;
         mem_reg_write <= ex_reg_write || ex_mem_read;
@@ -560,138 +611,57 @@ module cpu_top #(
     end
   end
 
-  // ========================================
-  // Hazard Detection (Modified for M/A)
-  // =======================================
-  logic load_use_hazard_comb;
-  logic data_hazard_comb;
+  /// ========================================
+// Hazard Detection (Modified for M/A)
+// ========================================
+always_comb begin
+  load_use_hazard = 1'b0;
+  data_hazard = 1'b0;
 
-  always_comb begin
-    load_use_hazard_comb = 1'b0;
-    data_hazard_comb = 1'b0;
-
-    // Load-use hazard
-    if (ex_mem_read && ex_valid && id_valid) begin
-      if ((ex_rd == rs1 && rs1 != 0) || (ex_rd == rs2 && rs2 != 0)) begin
-        load_use_hazard_comb = 1'b1;
-      end
-    end
-
-    // Data hazard (including M/A operations)
-    if (id_valid) begin
-      // Check regular operations
-      if (mem_reg_write && mem_valid) begin
-        if ((mem_rd == rs1 && rs1 != 0) || (mem_rd == rs2 && rs2 != 0)) begin
-          data_hazard_comb = 1'b1;
-        end
-      end
-
-      // Check M extension operations in flight
-      if (ex_is_m_op && ex_m_valid) begin
-        if ((ex_m_rd == rs1 && rs1 != 0) || (ex_m_rd == rs2 && rs2 != 0)) begin
-          data_hazard_comb = 1'b1;
-        end
-      end
-
-      // Check A extension operations in flight
-      if (ex_is_a_op && ex_a_valid) begin
-        if ((ex_a_rd == rs1 && rs1 != 0) || (ex_a_rd == rs2 && rs2 != 0)) begin
-          data_hazard_comb = 1'b1;
-        end
-      end
+  // Load-use hazard: need to stall if previous instruction is a load
+  // and current instruction uses that register
+  if (ex_mem_read && ex_valid && id_valid) begin
+    if ((ex_rd != 0) && ((ex_rd == rs1) || (ex_rd == rs2))) begin
+      load_use_hazard = 1'b1;
     end
   end
 
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      load_use_hazard <= 1'b0;
-      data_hazard <= 1'b0;
-    end else begin
-      load_use_hazard <= load_use_hazard_comb;
-      data_hazard <= data_hazard_comb;
+  // RAW hazard for M/A extension operations that aren't ready yet
+  if (id_valid) begin
+    // Check M operations - only stall if result not ready
+    if (ex_is_m_op && ex_m_valid) begin
+      if ((ex_m_rd != 0) && ((ex_m_rd == rs1) || (ex_m_rd == rs2))) begin
+        data_hazard = 1'b1;
+      end
+    end
+    
+    // Check A operations - only stall if result not ready
+    if (ex_is_a_op && !a_result_valid) begin
+      if ((ex_a_rd != 0) && ((ex_a_rd == rs1) || (ex_a_rd == rs2))) begin
+        data_hazard = 1'b1;
+      end
     end
   end
+end
 
-  assign pipeline_stall = load_use_hazard || data_hazard ||
-                         cp_stall_external || !imem_ready ||
-                         (ex_mem_read && !dmem_ready) ||
-                         (ex_mem_write && !dmem_ready) ||
-                         m_stall || a_stall_req;
+logic fetch_stall, execution_stall;
 
-  // ========================================
-  // State Machine
-  // ========================================
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      current_state <= IDLE;
-    end else begin
-      current_state <= next_state;
-    end
-  end
+assign fetch_stall = !imem_ready && imem_read;
 
-  always_comb begin
-    next_state = current_state;
+assign execution_stall = load_use_hazard              ||
+                        data_hazard                   ||
+                        cp_stall_external             ||
+                        (ex_mem_read && !dmem_ready)  ||
+                        (ex_mem_write && !dmem_ready) || 
+                        a_stall_req;
 
-    case (current_state)
-      IDLE: begin
-        next_state = FETCH;
-      end
-
-      FETCH: begin
-        if (imem_ready) begin
-          next_state = DECODE;
-        end else begin
-          next_state = FETCH;
-        end
-      end
-
-      DECODE: begin
-        if (pipeline_stall) begin
-          next_state = STALL;
-        end else begin
-          next_state = EXEC;
-        end
-      end
-
-      EXEC: begin
-        if (ex_mem_read || ex_mem_write) begin
-          next_state = MEM;
-        end else begin
-          next_state = WB;
-        end
-      end
-
-      MEM: begin
-        if (dmem_ready) begin
-          next_state = WB;
-        end else begin
-          next_state = MEM;
-        end
-      end
-
-      WB: begin
-        next_state = FETCH;
-      end
-
-      STALL: begin
-        if (!pipeline_stall) begin
-          next_state = EXEC;
-        end else begin
-          next_state = STALL;
-        end
-      end
-
-      default: begin
-        next_state = IDLE;
-      end
-    endcase
-  end
+assign pipeline_stall = fetch_stall || execution_stall;
 
   // ========================================
   // Debug Outputs
   // ========================================
   assign debug_pc = pc;
   assign debug_stall = pipeline_stall;
-  assign debug_state = current_state;
+  assign debug_state = {pipeline_stall, load_use_hazard, data_hazard, 1'b0};
 
 endmodule

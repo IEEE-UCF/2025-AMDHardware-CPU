@@ -276,6 +276,7 @@ module register_file_system #(
           CSR_SCAUSE:   scause <= new_value;
           CSR_STVAL:    stval <= new_value;
           CSR_SATP:     satp <= new_value;
+          default: ;
         endcase
       end
 
