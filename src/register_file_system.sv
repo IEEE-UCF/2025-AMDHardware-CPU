@@ -178,6 +178,8 @@ module register_file_system #(
 
   // CSR read logic
   always_comb begin
+    csr_rdata = 32'h0;
+    
     case (csr_addr)
       CSR_MSTATUS:  csr_rdata = mstatus;
       CSR_MISA:     csr_rdata = misa;
@@ -206,7 +208,7 @@ module register_file_system #(
       CSR_TIMEH:    csr_rdata = time_counter[63:32];
       CSR_INSTRETH: csr_rdata = instret_counter[63:32];
 
-      default: csr_rdata = '0;
+      default: ;
     endcase
   end
 
@@ -276,6 +278,7 @@ module register_file_system #(
           CSR_SCAUSE:   scause <= new_value;
           CSR_STVAL:    stval <= new_value;
           CSR_SATP:     satp <= new_value;
+          default: ;
         endcase
       end
 
@@ -418,4 +421,3 @@ module register_bank_cpu #(
   );
 
 endmodule
-
