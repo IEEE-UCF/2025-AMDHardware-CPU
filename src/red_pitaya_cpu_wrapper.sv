@@ -234,7 +234,7 @@ module red_pitaya_cpu_wrapper #(
   ) cpu_core (
       .clk(cpu_clk),
       .rst_n(cpu_rst_n),
-      .interrupt(ext_interrupt),
+      .interr(ext_interrupt),
 
       // Instruction Memory Interface
       .imem_addr(imem_addr),
@@ -288,12 +288,9 @@ module red_pitaya_cpu_wrapper #(
       .dmem_byte_enable(dmem_byte_enable),
       .dmem_read_data(dmem_read_data),
       .dmem_ready(dmem_ready),
-      .dmem_access_count(),
+      .dmem_access_count()
 
-      // Cache control
-      .cache_flush(1'b0),
-      .cache_invalidate(1'b0),
-      .cache_hit_count()
+      // Removed cache control signals - using direct BRAM access
   );
 
   // Performance counters

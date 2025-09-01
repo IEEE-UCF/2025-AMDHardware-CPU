@@ -642,3 +642,5 @@ static void write_cpu_reg_safe(uint32_t offset, uint32_t value) {
     volatile uint32_t *reg = (volatile uint32_t*)((char*)cpu_driver.mem_base + 0x20000 + offset);
     *reg = value;
 }
+
+(* ram_style = "block" *) logic [31:0] shared_memory [0:TOTAL_SIZE-1];

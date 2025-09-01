@@ -122,7 +122,7 @@ module cpu_axi_wrapper #(
     ) cpu_core (
         .clk(cpu_clk),
         .rst_n(cpu_rst_n),
-        .interrupt(cpu_interrupt),
+        .interr(cpu_interrupt),
         
         // Instruction Memory Interface
         .imem_addr(imem_addr),

@@ -37,6 +37,7 @@ module cpu_top #(
   // Internal signals
   logic [ADDR_WIDTH-1:0] pc;
   logic [ADDR_WIDTH-1:0] pc_next;
+  logic [3:0] reset_counter;  // Counter to stabilize after reset (increased size)
   logic [INST_WIDTH-1:0] instruction;
   logic                  inst_valid;
   logic                  pipeline_stall;
@@ -166,7 +167,7 @@ module cpu_top #(
   ) u_muldiv (
       .clk       (clk),
       .rst_n     (rst_n),
-      .valid_i   (is_m_op && id_valid && !pipeline_stall),
+      .valid_i   (is_m_op && id_valid && !load_use_hazard && !cp_stall_external),
       .funct3_i  (funct3),
       .rs1_data_i(id_rs1_data),
       .rs2_data_i(id_rs2_data),
@@ -174,7 +175,7 @@ module cpu_top #(
       .valid_o   (m_result_valid),
       .result_o  (m_result),
       .flush_i   (pipeline_flush),
-      .stall_i   (pipeline_stall)
+      .stall_i   (load_use_hazard || cp_stall_external)
   );
 
   assign m_stall = ex_is_m_op && ex_m_valid && !m_result_valid;
@@ -188,7 +189,7 @@ module cpu_top #(
   ) u_atomic (
       .clk(clk),
       .rst_n(rst_n),
-      .valid_i(is_a_op && id_valid && !pipeline_stall),
+      .valid_i(is_a_op && id_valid && !load_use_hazard && !cp_stall_external),
       .funct5_i(id_inst[31:27]),
       .aq_i(id_inst[26]),
       .rl_i(id_inst[25]),
@@ -217,7 +218,15 @@ module cpu_top #(
   // ========================================
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      pc <= 32'h00000000;
+      pc <= 32'h0000004c;
+      if_pc <= 32'h0000004c;
+      if_valid <= 1'b0;
+      reset_counter <= 4'b0;
+    end else if (reset_counter < 4'd10) begin
+      // Hold PC stable for first 10 cycles after reset
+      reset_counter <= reset_counter + 1;
+      pc <= 32'h0000004c;  // Keep PC at reset value
+      if_pc <= 32'h0000004c;
       if_valid <= 1'b0;
     end else if (!pipeline_stall) begin
       if (branch_taken) begin
@@ -236,7 +245,7 @@ module cpu_top #(
 
   // Instruction memory interface
   assign imem_addr = pc;
-  assign imem_read = !execution_stall;
+  assign imem_read = 1'b1;  // Always reading since BRAM is always ready
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
         if_inst <= 32'h00000013; // NOP Signal
@@ -472,7 +481,7 @@ end
   // ID Stage
   always_ff @(posedge clk or negedge rst_n) begin
   if (!rst_n) begin
-    id_pc <= 32'h0;
+    id_pc <= 32'h0000004c;
     id_inst <= 32'h00000013;  // NOP
     id_valid <= 1'b0;
     id_rs1_data <= 32'h0;
@@ -502,7 +511,7 @@ end
   // EX Stage (Modified for M/A)
   always_ff @(posedge clk or negedge rst_n) begin
   if (!rst_n) begin
-    ex_pc <= 32'h0;
+    ex_pc <= 32'h0000004c;
     ex_result <= 32'h0;
     ex_rd <= 5'h0;
     ex_reg_write <= 1'b0;
@@ -551,7 +560,7 @@ end
   // MEM Stage (Modified for M/A)
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      mem_pc <= 32'h0;
+      mem_pc <= 32'h0000004c;
       mem_result <= 32'h0;
       mem_rd <= 5'h0;
       mem_reg_write <= 1'b0;
@@ -652,51 +661,56 @@ end
     end
   end
 
-  /// ========================================
-// Hazard Detection (Modified for M/A)
+// ========================================
+// Simplified Hazard Detection for Red Pitaya BRAM (Fixed circular logic)
 // ========================================
 always_comb begin
   load_use_hazard = 1'b0;
   data_hazard = 1'b0;
 
-  // Load-use hazard: need to stall if previous instruction is a load
-  // and current instruction uses that register
+  // Simplified load-use hazard: only detect basic load-use case
+  // Since BRAM is single-cycle, we only need to stall for one cycle
   if (ex_mem_read && ex_valid && id_valid) begin
     if ((ex_rd != 0) && ((ex_rd == rs1) || (ex_rd == rs2))) begin
       load_use_hazard = 1'b1;
     end
   end
 
-  // RAW hazard for M/A extension operations that aren't ready yet
+  // Simplified RAW hazard for M/A extensions - avoid circular dependency
   if (id_valid) begin
-    // Check M operations - only stall if result not ready
+    // M operations - check if M operation is in execute stage and not ready
     if (ex_is_m_op && ex_m_valid) begin
       if ((ex_m_rd != 0) && ((ex_m_rd == rs1) || (ex_m_rd == rs2))) begin
-        data_hazard = 1'b1;
+        // Only create hazard if M result is not yet available
+        if (!m_result_valid) begin
+          data_hazard = 1'b1;
+        end
       end
     end
     
-    // Check A operations - only stall if result not ready
-    if (ex_is_a_op && !a_result_valid) begin
+    // A operations - check if A operation is active and not ready
+    if (ex_is_a_op) begin
       if ((ex_a_rd != 0) && ((ex_a_rd == rs1) || (ex_a_rd == rs2))) begin
-        data_hazard = 1'b1;
+        // Only create hazard if A result is not yet available
+        if (!a_result_valid) begin
+          data_hazard = 1'b1;
+        end
       end
     end
   end
 end
 
-logic fetch_stall, execution_stall;
+// Simplified stall logic for Red Pitaya - broken into stages to avoid circular logic
+logic execution_stall;
 
-assign fetch_stall = !imem_ready && imem_read;
-
-assign execution_stall = load_use_hazard              ||
-                        data_hazard                   ||
-                        cp_stall_external             ||
-                        (ex_mem_read && !dmem_ready)  ||
-                        (ex_mem_write && !dmem_ready) || 
+// Since BRAM is always ready, remove memory ready checks
+// Break circular dependency by not using pipeline_stall in M/A unit inputs
+assign execution_stall = load_use_hazard    ||
+                        data_hazard         ||
+                        cp_stall_external   ||
                         a_stall_req;
 
-assign pipeline_stall = fetch_stall || execution_stall;
+assign pipeline_stall = execution_stall;  // Removed fetch_stall since BRAM is always ready
 
   // ========================================
   // Debug Outputs
